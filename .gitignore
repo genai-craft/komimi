@@ -1,0 +1,24 @@
+__pycache__/
+*.pyc
+csrc/komimi_cli
+csrc/komimi_cli_avx2
+csrc/komimi_cli_kv8
+esp32/build_*/
+esp32/sdkconfig*
+!esp32/sdkconfig.defaults*
+esp32/*.log
+esp32/build_all.out
+esp32/dependencies.lock
+.pytest_cache/
+
+# 配信用の大きなモデル (kana-whisper ONNX) は git に入れない
+web/dist/models/kana-whisper/onnx/
+*.onnx
+*.onnx_data
+esp32/**/build/
+esp32/**/*.log
+csrc/komimi_cli_att8
+esp32/**/sdkconfig
+esp32/**/sdkconfig.old
+!esp32/**/sdkconfig.defaults*
+esp32/**/dependencies.lock

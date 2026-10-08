@@ -1,0 +1,217 @@
+<!doctype html>
+<html lang="ja">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>komimi — ブラウザで端末と同じ日本語カナ認識</title>
+<style>
+  :root { --bg:#0f1115; --fg:#e8e8e8; --dim:#8a8f98; --card:#171a21; --acc:#5fd3f3; --ok:#4ade80; --warn:#f59e0b; }
+  * { box-sizing: border-box; }
+  body { margin:0; background:var(--bg); color:var(--fg); font-family: system-ui, -apple-system, "Hiragino Sans", "Noto Sans JP", sans-serif; }
+  header { padding:16px 20px; display:flex; align-items:baseline; gap:14px; flex-wrap:wrap; border-bottom:1px solid #222; }
+  header h1 { margin:0; font-size:20px; color:var(--acc); letter-spacing:.04em; }
+  header .sub { color:var(--dim); font-size:13px; }
+  main { padding:16px 20px 40px; max-width:1200px; margin:0 auto; }
+  .bar { display:flex; gap:10px; flex-wrap:wrap; align-items:center; margin-bottom:14px; }
+  button { background:#232833; color:var(--fg); border:1px solid #333a48; padding:8px 14px; border-radius:8px; cursor:pointer; font-size:14px; }
+  button.primary { background:var(--acc); color:#06202a; border-color:var(--acc); font-weight:600; }
+  button:disabled { opacity:.45; cursor:default; }
+  .meter { height:10px; width:160px; background:#1c2028; border-radius:5px; overflow:hidden; position:relative; }
+  .meter > i { display:block; height:100%; width:0; background:var(--ok); }
+  .grid { display:grid; grid-template-columns: repeat(auto-fit, minmax(320px, 1fr)); gap:14px; }
+  .card { background:var(--card); border:1px solid #232833; border-radius:12px; padding:12px 14px; min-height:260px; display:flex; flex-direction:column; }
+  .card h2 { margin:0 0 6px; font-size:15px; display:flex; justify-content:space-between; align-items:center; gap:8px; }
+  .card .meta { color:var(--dim); font-size:12px; margin-bottom:8px; }
+  .card select { background:#232833; color:var(--fg); border:1px solid #333a48; border-radius:6px; padding:3px 6px; font-size:12px; }
+  .out { flex:1; font-size:22px; line-height:1.5; letter-spacing:.02em; white-space:pre-wrap; word-break:break-all; min-height:160px; }
+  .out .old { color:var(--dim); }
+  .stat { font-size:12px; color:var(--dim); margin-top:8px; display:flex; gap:14px; }
+  .stat b { color:var(--fg); font-weight:500; }
+  .stat .slow { color:var(--warn); }
+  footer { color:var(--dim); font-size:12px; padding:0 20px 30px; max-width:1200px; margin:0 auto; line-height:1.6; }
+  a { color:var(--acc); }
+  #status { color:var(--dim); font-size:13px; }
+</style>
+</head>
+<body>
+<header>
+  <h1>komimi</h1>
+  <span class="sub">ESP32-S3 / ESP32-P4 で動く日本語カナ認識を、同じ int8 演算でブラウザ (WebAssembly) に。端末と同じモデル・同じ結果、速さだけ PC。</span>
+</header>
+<main>
+  <div class="bar">
+    <button id="mic" class="primary" disabled>マイクで試す</button>
+    <button id="stop" disabled>停止</button>
+    <label><input type="file" id="file" accept="audio/*" hidden><button id="filebtn" disabled>音声ファイル</button></label>
+    <button id="clear" disabled>クリア</button>
+    <span class="meter"><i id="lvl"></i></span>
+    <label style="font-size:13px;color:var(--dim)"><input type="checkbox" id="gate" checked> 無音スキップ</label>
+    <label style="font-size:13px;color:var(--dim)"><input type="checkbox" id="dedup"> 接頭辞重複の除去 (実験)</label>
+    <span id="status">読み込み中…</span>
+  </div>
+  <div class="grid" id="grid"></div>
+  <div class="card" id="kwcard" style="margin-top:14px">
+    <h2><span>kana-whisper (809M、教師モデル) をブラウザで</span>
+      <span><button id="kwtoggle">読み込む (約 2.0 GB、WebGPU)</button></span></h2>
+    <div class="meta" id="kwmeta">重いので既定 off。Chrome/Edge の WebGPU で動きます。発話が無音で区切れるたびに丸ごと認識 (ストリーミングではない)。komimi の教師なので、これとの差が「蒸留で失ったぶん」。</div>
+    <div class="out" id="kwout"></div>
+    <div class="stat"><span>最後の区間 <b id="kwms">–</b></span><span>RTF <b id="kwrtf">–</b></span><span>区間数 <b id="kwn">0</b></span></div>
+  </div>
+</main>
+<footer>
+  左右 (以上) のエンジンには同じ音が入ります。chunk は何フレーム (1 フレーム 40 ms) 溜めてから処理するか = 遅延。端末では S3 が 8 層・chunk 16 (0.64 s)、P4 が 16 層・chunk 32 (1.28 s) で実時間。
+  RTF は「計算時間 ÷ 音の長さ」(端末: S3 0.93、P4 0.85。ここでは PC の 1 コアの値)。出力はカナ (学習の教師が kana-whisper の読み)。
+  ソースと数字: <a href="https://github.com/genai-craft/komimi">github.com/genai-craft/komimi</a> (Apache-2.0)。
+</footer>
+<script>
+const MODELS = {
+  s3:  { name: 'S3 用: 8 層 sub_ch 88 (v10s)', file: 'models/ja_v10s_i8_c16.kmm', chunk: 16 },
+  p4:  { name: 'P4 用: 16 層 (v10)',           file: 'models/ja_v10_i8_c32.kmm',  chunk: 32 },
+};
+const PANELS = [ { model: 's3', chunk: 16, title: 'ESP32-S3 相当' }, { model: 'p4', chunk: 32, title: 'ESP32-P4 相当' }, { model: 'p4', chunk: 16, title: '16 層を chunk 16 で (PC 向け)' } ];
+const grid = document.getElementById('grid'), status = document.getElementById('status');
+const modelBufs = {}; const engines = [];
+
+async function fetchModel(key) {
+  if (modelBufs[key]) return modelBufs[key];
+  status.textContent = `モデル取得中: ${MODELS[key].name}`;
+  const r = await fetch(MODELS[key].file); const buf = await r.arrayBuffer();
+  modelBufs[key] = buf; return buf;
+}
+function makePanel(cfg, idx) {
+  const card = document.createElement('div'); card.className = 'card';
+  card.innerHTML = `<h2><span>${cfg.title}</span>
+      <span><select class="model">${Object.entries(MODELS).map(([k, m]) => `<option value="${k}" ${k === cfg.model ? 'selected' : ''}>${m.name}</option>`).join('')}</select>
+      <select class="chunk"><option value="16" ${cfg.chunk === 16 ? 'selected' : ''}>chunk 16 (0.64 s)</option><option value="32" ${cfg.chunk === 32 ? 'selected' : ''}>chunk 32 (1.28 s)</option></select></span></h2>
+    <div class="meta"></div><div class="out"></div>
+    <div class="stat"><span>RTF <b class="rtf">–</b></span><span>1 チャンク <b class="ms">–</b></span><span>処理フレーム <b class="fr">0</b></span><span>無音スキップ <b class="sk">0</b></span></div>`;
+  grid.appendChild(card);
+  const eng = { cfg: { ...cfg }, card, worker: null, ready: false, lastText: '', cuts: [] };
+  card.querySelector('.model').onchange = (e) => { eng.cfg.model = e.target.value; restart(eng); };
+  card.querySelector('.chunk').onchange = (e) => { eng.cfg.chunk = +e.target.value; restart(eng); };
+  return eng;
+}
+async function restart(eng) {
+  if (eng.worker) eng.worker.terminate();
+  eng.ready = false; eng.lastText = ''; eng.cuts = []; eng.lastSkipped = 0; eng.lastTokenAt = 0;
+  eng.card.querySelector('.out').textContent = ''; eng.card.querySelector('.meta').textContent = '読み込み中…';
+  const buf = await fetchModel(eng.cfg.model);
+  const w = new Worker('worker.js?v=20261008b'); eng.worker = w;
+  w.onmessage = (e) => {
+    const d = e.data;
+    if (d.type === 'ready') { eng.ready = true; eng.card.querySelector('.meta').textContent = `${d.layers} 層, sub_ch ${d.subCh}, chunk ${eng.cfg.chunk}, left 128, int8 (重み・活性・KV・注意)`; updateStatus(); }
+    else if (d.type === 'text') render(eng, d);
+    else if (d.type === 'error') eng.card.querySelector('.meta').textContent = d.msg;
+  };
+  w.postMessage({ type: 'init', model: buf.slice(0), chunk: eng.cfg.chunk, left: 128, gateDb: document.getElementById('gate').checked ? -55 : 0, dedup: document.getElementById('dedup').checked });
+}
+function render(eng, d) {
+  // 段落: 無音スキップが 2 チャンク以上続いた、または token が 1.5 秒以上出なかったら、新しい token の「前」で改行
+  const now = performance.now();
+  eng.cuts = eng.cuts || [];
+  if (d.text !== eng.lastText) {
+    const gap = d.skipped >= (eng.lastSkipped || 0) + 2 || (eng.lastTokenAt && now - eng.lastTokenAt > 1500);
+    const at = eng.lastText.length;                                  // 足す前の長さ = 新しい token の直前
+    if (eng.lastText && gap && at > 0 && eng.cuts[eng.cuts.length - 1] !== at) eng.cuts.push(at);
+    eng.lastTokenAt = now;
+  }
+  if (d.skipped !== undefined) eng.lastSkipped = d.skipped;
+  eng.lastText = d.text;
+  const out = eng.card.querySelector('.out'); out.innerHTML = '';
+  let pos = 0; const parts = [];
+  for (const c of eng.cuts) { if (c > pos && c <= d.text.length) { parts.push(d.text.slice(pos, c)); pos = c; } }
+  parts.push(d.text.slice(pos));
+  parts.forEach((p, i) => { const sp = document.createElement('span'); sp.textContent = p.trim() + (i < parts.length - 1 ? '\n' : ''); if (i < parts.length - 1) sp.className = 'old'; out.appendChild(sp); });
+  eng.card.querySelector('.rtf').textContent = d.rtf ? d.rtf.toFixed(3) : '–';
+  if (d.chunkMs > 0) eng.card.querySelector('.ms').textContent = d.chunkMs.toFixed(0) + ' ms';
+  eng.card.querySelector('.fr').textContent = d.frames; eng.card.querySelector('.sk').textContent = d.skipped;
+}
+// ---- kana-whisper (別ワーカー、ON のときだけ) ----
+let kw = null, kwReady = false, kwBuf = [], kwBufLen = 0, kwSilence = 0, kwVoiced = false, kwN = 0, kwBusyMs = 0, kwAudioS = 0, kwText = '';
+const kwToggle = document.getElementById('kwtoggle');
+kwToggle.onclick = async () => {
+  if (kw) { kw.terminate(); kw = null; kwReady = false; kwToggle.textContent = '読み込む (約 2.0 GB、WebGPU)'; document.getElementById('kwmeta').textContent = 'off'; return; }
+  const kwDevice = ('gpu' in navigator) ? 'webgpu' : 'wasm';
+  if (kwDevice === 'wasm') document.getElementById('kwmeta').textContent = 'WebGPU が無いので CPU (wasm) で動かします (とても遅い。Chrome / Edge の最新版なら WebGPU)';
+  kw = new Worker('kw_worker.js?v=20261008b'); kwToggle.textContent = '読み込み中… (押すと中止)';
+  kw.onmessage = (e) => {
+    const d = e.data;
+    if (d.type === 'progress') document.getElementById('kwmeta').textContent = `取得中 ${d.file} ${Math.round(d.pct || 0)}%`;
+    else if (d.type === 'ready') { kwReady = true; kwToggle.textContent = 'off にする'; document.getElementById('kwmeta').textContent = `準備完了 (${(d.ms / 1000).toFixed(0)} s、${d.device})。無音で区切って認識します`; }
+    else if (d.type === 'text') { kwN++; kwBusyMs += d.ms; kwAudioS += d.sec; kwText += (kwText ? '\n' : '') + d.text; document.getElementById('kwout').textContent = kwText;
+      document.getElementById('kwms').textContent = `${(d.ms / 1000).toFixed(1)} s / ${d.sec.toFixed(1)} s`; document.getElementById('kwrtf').textContent = (kwBusyMs / 1000 / kwAudioS).toFixed(2); document.getElementById('kwn').textContent = kwN; }
+    else if (d.type === 'error') { document.getElementById('kwmeta').textContent = 'エラー: ' + d.msg.slice(0, 200); }
+  };
+  kw.postMessage({ type: 'init', base: location.origin + '/models/', device: kwDevice });
+};
+// マイク/ファイルの音を発話単位に: 声が出てから 0.8 s 無音が続いたら (または 25 s 溜まったら) 1 区間
+function kwFeed(y) {
+  if (!kwReady) return;
+  let e = 0; for (let i = 0; i < y.length; i++) e += y[i] * y[i]; const db = 10 * Math.log10(e / y.length + 1e-12);
+  const voiced = db > -50;
+  if (voiced) { kwVoiced = true; kwSilence = 0; } else if (kwVoiced) kwSilence += y.length / 16000;
+  if (kwVoiced || kwBufLen > 0) { kwBuf.push(y); kwBufLen += y.length; }
+  if ((kwVoiced && kwSilence >= 0.8) || kwBufLen >= 16000 * 25) kwFlush();
+}
+function kwFlush() {
+  if (!kwReady || kwBufLen < 16000 * 0.4) { kwBuf = []; kwBufLen = 0; kwVoiced = false; kwSilence = 0; return; }
+  const pcm = new Float32Array(kwBufLen); let o = 0; for (const b of kwBuf) { pcm.set(b, o); o += b.length; }
+  kw.postMessage({ type: 'transcribe', id: kwN, pcm }, [pcm.buffer]);
+  kwBuf = []; kwBufLen = 0; kwVoiced = false; kwSilence = 0;
+}
+
+function updateStatus() {
+  const n = engines.filter(e => e.ready).length;
+  status.textContent = n === engines.length ? '準備完了 — マイクか音声ファイルで' : `エンジン準備中 (${n}/${engines.length})`;
+  const ok = n === engines.length;
+  document.getElementById('mic').disabled = !ok; document.getElementById('filebtn').disabled = !ok; document.getElementById('clear').disabled = !ok;
+}
+function broadcast(pcm, flush) { for (const e of engines) if (e.ready) e.worker.postMessage({ type: 'feed', pcm, flush }); kwFeed(pcm); }
+function resampleTo16k(x, sr) {
+  if (sr === 16000) return x;
+  const n = Math.floor(x.length * 16000 / sr); const y = new Float32Array(n);
+  for (let i = 0; i < n; i++) { const t = i * sr / 16000; const j = Math.floor(t); const f = t - j; y[i] = (x[j] || 0) * (1 - f) + (x[j + 1] || 0) * f; }
+  return y;
+}
+// ---- マイク ----
+let audioCtx = null, micStream = null, proc = null;
+document.getElementById('mic').onclick = async () => {
+  micStream = await navigator.mediaDevices.getUserMedia({ audio: { channelCount: 1, echoCancellation: true, noiseSuppression: false, autoGainControl: true } });
+  audioCtx = new (window.AudioContext || window.webkitAudioContext)();
+  const src = audioCtx.createMediaStreamSource(micStream);
+  proc = audioCtx.createScriptProcessor(4096, 1, 1);
+  const lvl = document.getElementById('lvl');
+  proc.onaudioprocess = (ev) => {
+    const x = ev.inputBuffer.getChannelData(0); const y = resampleTo16k(x, audioCtx.sampleRate);
+    let e = 0; for (let i = 0; i < y.length; i++) e += y[i] * y[i]; const db = 10 * Math.log10(e / y.length + 1e-12);
+    lvl.style.width = Math.max(0, Math.min(100, (db + 80) / 80 * 100)) + '%';
+    broadcast(y, false);
+  };
+  src.connect(proc); proc.connect(audioCtx.destination);
+  document.getElementById('mic').disabled = true; document.getElementById('stop').disabled = false; status.textContent = '聞いています…';
+};
+document.getElementById('stop').onclick = () => {
+  if (proc) { proc.disconnect(); proc = null; } if (micStream) { micStream.getTracks().forEach(t => t.stop()); micStream = null; } if (audioCtx) { audioCtx.close(); audioCtx = null; }
+  for (const e of engines) if (e.ready) e.worker.postMessage({ type: 'finish' });
+  kwFlush();
+  document.getElementById('mic').disabled = false; document.getElementById('stop').disabled = true; status.textContent = '停止';
+};
+document.getElementById('clear').onclick = () => { for (const e of engines) if (e.ready) { e.worker.postMessage({ type: 'reset' }); e.cuts = []; e.lastText = ''; e.lastTokenAt = 0; } kwText = ''; document.getElementById('kwout').textContent = ''; };
+document.getElementById('filebtn').onclick = () => document.getElementById('file').click();
+document.getElementById('file').onchange = async (ev) => {
+  const f = ev.target.files[0]; if (!f) return;
+  const ac = new (window.AudioContext || window.webkitAudioContext)(); const ab = await ac.decodeAudioData(await f.arrayBuffer());
+  const y = resampleTo16k(ab.getChannelData(0), ab.sampleRate); ac.close();
+  document.getElementById('clear').click();
+  status.textContent = `${f.name} (${(y.length / 16000).toFixed(1)} s) を処理中…`;
+  for (let i = 0; i < y.length; i += 1600) broadcast(y.slice(i, i + 1600), false);
+  for (const e of engines) if (e.ready) e.worker.postMessage({ type: 'finish' });
+  kwFlush();
+  status.textContent = `${f.name} 完了`;
+};
+document.getElementById('gate').onchange = () => engines.forEach(restart);
+document.getElementById('dedup').onchange = () => engines.forEach(restart);
+(async () => { for (const [i, p] of PANELS.entries()) engines.push(makePanel(p, i)); for (const e of engines) await restart(e); })();
+</script>
+</body>
+</html>

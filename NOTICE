@@ -1,0 +1,13 @@
+komimi (小耳) — 小さな Conformer-CTC 音声認識を ESP32-S3 / ESP32-P4 / ホストで動かす、独自実装のエンジン一式
+Copyright 2026 Satoshi Toriumi and komimi contributors
+
+Licensed under the Apache License, Version 2.0.
+
+アーキテクチャは NVIDIA NeMo の Conformer-CTC Small (stt_en_conformer_ctc_small) の公開設定に従う。
+配布する重み (.kmm) は、NVIDIA の公開重み (CC-BY-4.0) を日本語カナで微調整したものを含みうる。
+その場合、重みのライセンスは CC-BY-4.0 (NVIDIA への帰属表示) に従う。
+このリポジトリに他プロジェクトのソースコードは含まれていない (docs/design.md に由来を記す)。
+
+web/dist/models/kana-whisper/ の設定・トークナイザのファイルは sbintuitions/kana-whisper (MIT License、Copyright (c) 2026 SB Intuitions) のもの (同ディレクトリの LICENSE)。
+esp32/demo_s3/main/font_kana16.h の 16×16 カナのビットマップは IPA ゴシック (IPA フォントライセンス v1.0) から生成したもの (同ディレクトリの IPA_Font_License_Agreement_v1.0.txt)。
+esp32/main/test_audio.h の試験音声は pyopenjtalk (Open JTalk、既定の HTS 音声 nitech_jp_atr503_m001、CC-BY-3.0) で合成した音声 (ReazonSpeech の音声は同梱しない)。
