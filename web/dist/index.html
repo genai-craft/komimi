@@ -67,8 +67,9 @@
 const MODELS = {
   s3:  { name: 'S3 用: 8 層 sub_ch 88 (v10s)', file: 'models/ja_v10s_i8_c16.kmm', chunk: 16 },
   p4:  { name: 'P4 用: 16 層 (v10)',           file: 'models/ja_v10_i8_c32.kmm',  chunk: 32 },
+  pc:  { name: 'PC 用: 16 層 d=256 (v11a、30M)', file: 'models/ja_v11a_i8_c32.kmm', chunk: 32 },
 };
-const PANELS = [ { model: 's3', chunk: 16, title: 'ESP32-S3 相当' }, { model: 'p4', chunk: 32, title: 'ESP32-P4 相当' }, { model: 'p4', chunk: 16, title: '16 層を chunk 16 で (PC 向け)' } ];
+const PANELS = [ { model: 's3', chunk: 16, title: 'ESP32-S3 相当' }, { model: 'p4', chunk: 32, title: 'ESP32-P4 相当' }, { model: 'pc', chunk: 32, title: 'PC 向け (v11a、CER 19.8%)' } ];
 const grid = document.getElementById('grid'), status = document.getElementById('status');
 const modelBufs = {}; const engines = [];
 
