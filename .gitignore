@@ -23,3 +23,5 @@ esp32/**/sdkconfig.old
 !esp32/**/sdkconfig.defaults*
 esp32/**/dependencies.lock
 web/dist/media/
+models/ja_v12_i8_c*.kmm
+web/dist/models/ja_v12_*
