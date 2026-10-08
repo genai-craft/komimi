@@ -22,3 +22,4 @@ esp32/**/sdkconfig
 esp32/**/sdkconfig.old
 !esp32/**/sdkconfig.defaults*
 esp32/**/dependencies.lock
+web/dist/media/
