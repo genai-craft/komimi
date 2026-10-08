@@ -35,4 +35,4 @@ python -m serial.tools.miniterm COM7 115200
 | 端末 | イメージ | モデル | RTF |
 |---|---|---|---|
 | ESP32-P4 (16 MB flash / 32 MB PSRAM) | `build_esp32p4/komimi_p4_full_ja_v10_i8_c32.bin` | v10 16 層 int8、chunk 32 (遅延 1.3 s)、dev300 CER 23.25% | 0.85 |
-| M5StickS3 (8 MB flash / 8 MB PSRAM) | `build_m5sticks3/komimi_m5sticks3_full_ja_v10s_i8_c16.bin` | v10s 8 層 sub_ch 88 int8、chunk 16 (遅延 0.65 s)、dev300 CER 28.82% | 0.93 |
+| M5StickS3 (8 MB flash / 8 MB PSRAM) | `komimi_m5sticks3_app.bin` + `models/ja_v12s_i8_c16.kmm` を 0x90000 に | v12s 8 層 sub_ch 88 int8、chunk 16 (遅延 0.65 s)、dev300 CER 24.75% | 0.93 |
