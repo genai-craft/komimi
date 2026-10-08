@@ -59,7 +59,7 @@ struct km_stream {
     int8_t *qb;
     /* 状態 */
     long frames_done; int prev, finished;
-    float silence_db; long ctx_start; int skipped;      /* 無音ゲート: しきい値 (dBFS、0 = 無効)、文脈の開始フレーム (飛ばした直後はリセット)、飛ばしたチャンク数 */
+    float silence_db; long ctx_start; int skipped; long pend; int pend_n;   /* pend: 無音と判定したが確定していないチャンクの先頭フレーム (−1 = 無し)。次が声なら先に流す (出だしの子音・母音と左文脈を落とさない) */      /* 無音ゲート: しきい値 (dBFS、0 = 無効)、文脈の開始フレーム (飛ばした直後はリセット)、飛ばしたチャンク数 */
     int *ids; int *id_frame; int n_ids, cap_ids;
     int dedup_prefix;                         /* 1: 直前の piece が隣接フレームで出た次の piece の接頭辞なら捨てる (CTC+サブワードの「タ」「タイムズ」対策) */
     void (*tap)(void *, int, const float *, int); void *tap_ctx;
@@ -96,7 +96,7 @@ km_stream *km_stream_new(const km_model *m, int chunk, int left) {
     s->F0 = m->n_mel; s->F1 = (s->F0 - 1) / 2 + 1; s->F2 = (s->F1 - 1) / 2 + 1;
     s->dkp = (s->dk + 15) / 16 * 16; s->ks = s->heads * s->dkp; s->LCp = (left + chunk + 15) / 16 * 16;   /* 下の確保で使うので先に */
     int C = chunk, d = m->d;
-    s->pcm_cap = (long)(4 * C + 8) * m->hop + 2 * m->win;        /* chunk 32 なら約 21k サンプル (以前は固定 16384 で溢れていた) */
+    s->pcm_cap = (long)(8 * C + 8) * m->hop + 2 * m->win;        /* 2 チャンクぶん: 無音判定を 1 チャンク保留して、声の直前のチャンクを後から流せるように (chunk 32 で約 41k サンプル) */
     s->pcm = (float *)zalloc(s, sizeof(float) * s->pcm_cap);
     s->mel = (float *)zalloc(s, sizeof(float) * (4 * C + 3) * s->F0);
     /* 確保順 = 内部 RAM に残したい順 (足りないと後ろから PSRAM に落ちる): fw/xq/A/Xn.. → 小物 → h1 */
@@ -250,7 +250,7 @@ void km_stream_free(km_stream *s) {
 
 void km_stream_reset(km_stream *s) {
     s->n_total = 0; s->T_total = -1; s->T1_total = -1; s->frames_done = 0; s->prev = s->m->vocab - 1; s->finished = 0; s->n_ids = 0;
-    s->ctx_start = 0; s->skipped = 0;
+    s->ctx_start = 0; s->skipped = 0; s->pend = -1; s->pend_n = 0;
     memset(s->pcm, 0, sizeof(float) * s->pcm_cap);
     memset(s->gc, 0, sizeof(float) * s->nl * (s->half + s->C) * s->d);
     s->h1_next = 0;
@@ -261,15 +261,38 @@ void km_stream_set_silence_gate(km_stream *s, float dbfs) { s->silence_db = dbfs
 int km_stream_skipped(const km_stream *s) { return s->skipped; }
 
 static inline float sample(const km_stream *s, long i);
+static void process(km_stream *s, long t0, int n);
+static void skip_chunk(km_stream *s, long t0, int n);
 
-/* チャンク [t0, t0+n) に対応する音 (フレーム 4t0 .. 4(t0+n) ぶんのサンプル) の RMS (dBFS) */
+/* チャンク [t0, t0+n) に対応する音 (フレーム 4t0 .. 4(t0+n) ぶんのサンプル) の、40 ms 窓ごとの RMS の最大 (dBFS)。
+   チャンク全体の平均だと、末尾に短く小さく始まる声 (母音の出だし) が無音扱いになるので、最大で見る */
 static float chunk_dbfs(const km_stream *s, long t0, int n) {
     long a = 4 * t0 * (long)s->m->hop, b = 4 * (t0 + n) * (long)s->m->hop; if (b > s->n_total) b = s->n_total;
-    double e = 0; long cnt = 0;
-    for (long i = a; i < b; i++) { float v = sample(s, i); e += (double)v * v; cnt++; }
+    long w = 4 * (long)s->m->hop; double best = 0; long cnt = 0;
+    for (long i = a; i < b; i += w) {
+        double e = 0; long c = 0;
+        for (long j = i; j < i + w && j < b; j++) { float v = sample(s, j); e += (double)v * v; c++; }
+        if (c > 0) { e /= c; if (e > best) best = e; cnt += c; }
+    }
     if (cnt == 0) return -120.f;
-    return (float)(10.0 * log10(e / cnt + 1e-12));
+    return (float)(10.0 * log10(best + 1e-12));
 }
+
+/* チャンクの扱いを決める。無音なら確定せず保留 (pend)。次も無音なら保留分を飛ばし、次が声なら保留分を先に流してから声を流す
+   (声の直前の無音・雑音をモデルに見せる。出だしの子音・母音を切らず、左文脈も残る)。
+   注: 立ち上がり位置で格子を合わせ直す案 (手前の音を無かったことにする) も試したが、1 文字目の一致率は変わらなかった。
+   出だしの弱さは「発話の前に音が続いている」こと自体にモデルが慣れていないためで、学習側 (先頭に無音・雑音を足す増強) で直す。 */
+static void decide(km_stream *s, long t0, int n) {
+    int quiet = s->silence_db != 0.f && chunk_dbfs(s, t0, n) < s->silence_db;
+    if (quiet) {
+        if (s->pend >= 0) skip_chunk(s, s->pend, s->pend_n);
+        s->pend = t0; s->pend_n = n;
+    } else {
+        if (s->pend >= 0) { process(s, s->pend, s->pend_n); s->pend = -1; }
+        process(s, t0, n);
+    }
+}
+static inline long next_t0(const km_stream *s) { return s->pend >= 0 ? s->pend + s->pend_n : s->frames_done; }
 
 /* 無音チャンクを飛ばす: 出力フレームだけ進め、以後の左文脈をこのチャンクの終わりからにする */
 static void skip_chunk(km_stream *s, long t0, int n) {
@@ -708,17 +731,13 @@ int km_stream_feed(km_stream *s, const float *pcm, int n) {
         long oldest = (4 * s->frames_done - 3) * (long)s->m->hop - s->m->win / 2 - 1; if (oldest < 0) oldest = 0;
         long room = oldest + s->pcm_cap - s->n_total;
         if (room <= 0) {                                                 /* 処理できるはず (need ≤ n_total) */
-            if (s->n_total >= need_samples(s, s->frames_done)) { if (s->silence_db != 0.f && chunk_dbfs(s, s->frames_done, s->C) < s->silence_db) skip_chunk(s, s->frames_done, s->C); else process(s, s->frames_done, s->C); done++; continue; }
+            if (s->n_total >= need_samples(s, next_t0(s))) { decide(s, next_t0(s), s->C); done++; continue; }
             return done;                                                 /* 起きないはず */
         }
         int take = (int)(n - i < room ? n - i : room);
         for (int k = 0; k < take; k++) s->pcm[(s->n_total + k) % s->pcm_cap] = pcm[i + k];
         s->n_total += take; i += take;
-        while (s->n_total >= need_samples(s, s->frames_done)) {
-            if (s->silence_db != 0.f && chunk_dbfs(s, s->frames_done, s->C) < s->silence_db) skip_chunk(s, s->frames_done, s->C);
-            else process(s, s->frames_done, s->C);
-            done++;
-        }
+        while (s->n_total >= need_samples(s, next_t0(s))) { decide(s, next_t0(s), s->C); done++; }
     }
     return done;
 }
@@ -729,9 +748,9 @@ void km_stream_finish(km_stream *s) {
     s->T_total = 1 + s->n_total / s->m->hop;
     s->T1_total = (s->T_total - 1) / 2 + 1;
     long Tout = (s->T1_total - 1) / 2 + 1;
-    while (s->frames_done < Tout) {
-        int n = (int)(Tout - s->frames_done < s->C ? Tout - s->frames_done : s->C);
-        if (s->silence_db != 0.f && chunk_dbfs(s, s->frames_done, n) < s->silence_db) skip_chunk(s, s->frames_done, n);
-        else process(s, s->frames_done, n);
+    while (next_t0(s) < Tout) {
+        long t0 = next_t0(s); int n = (int)(Tout - t0 < s->C ? Tout - t0 : s->C);
+        decide(s, t0, n);
     }
+    if (s->pend >= 0) { skip_chunk(s, s->pend, s->pend_n); s->pend = -1; }    /* 末尾の無音は飛ばす */
 }
