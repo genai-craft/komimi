@@ -52,7 +52,7 @@
   <div class="grid" id="grid"></div>
   <div class="card" id="kwcard" style="margin-top:14px">
     <h2><span>kana-whisper (809M、教師モデル) をブラウザで</span>
-      <span><select id="kwmode"><option value="light" selected>軽量 (約 0.7 GB、教師比 CER +3 pt: encoder q4f16 + decoder q4)</option><option value="full">精度優先 (約 2.0 GB、GPU メモリ 3 GB 級: encoder fp16 + decoder fp32)</option></select> <button id="kwtoggle">読み込む (WebGPU)</button></span></h2>
+      <span><select id="kwmode"><option value="light" selected>軽量 (WebGPU: q4f16 + q4、0.7 GB、教師比 CER +3 pt / CPU: int8 + q4、1.0 GB)</option><option value="full">精度優先 (WebGPU: fp16 + fp32、2.0 GB、GPU メモリ 3 GB 級 / CPU: int8 + fp32、1.3 GB)</option></select> <button id="kwtoggle">読み込む (WebGPU)</button></span></h2>
     <div class="meta" id="kwmeta" style="white-space:pre-line">重いので既定 off。Chrome/Edge の WebGPU で動きます。発話が無音で区切れるたびに丸ごと認識 (ストリーミングではない)。komimi の教師なので、これとの差が「蒸留で失ったぶん」。</div>
     <div class="out" id="kwout"></div>
     <div class="stat"><span>最後の区間 <b id="kwms">–</b></span><span>RTF <b id="kwrtf">–</b></span><span>区間数 <b id="kwn">0</b></span></div>
@@ -135,17 +135,20 @@ kwToggle.onclick = async () => {
   if (kw) { kw.terminate(); kw = null; kwReady = false; clearTimeout(kwWatch); kwToggle.textContent = '読み込む (WebGPU)'; kwMeta.textContent = 'off'; return; }
   const kwDevice = ('gpu' in navigator) ? 'webgpu' : 'wasm'; const kwMode = document.getElementById('kwmode').value;
   // GPU の素性 (問題の切り分け用): ベンダー、f16 対応、バッファ上限
-  let gpuInfo = 'WebGPU なし (CPU で動かします。とても遅い)';
-  if (kwDevice === 'webgpu') { try { const a = await navigator.gpu.requestAdapter(); const inf = a.info || (a.requestAdapterInfo ? await a.requestAdapterInfo() : {});
-      gpuInfo = `GPU: ${inf.vendor || '?'} ${inf.architecture || ''} ${inf.description || ''}`.trim() + ` / f16 ${a.features.has('shader-f16') ? 'あり' : 'なし'} / buffer ${(a.limits.maxBufferSize / 1e9).toFixed(1)} GB / bind ${(a.limits.maxStorageBufferBindingSize / 1e6).toFixed(0)} MB`; } catch (e) { gpuInfo = 'GPU 情報の取得に失敗: ' + e; } }
+  let gpuInfo = 'WebGPU なし (CPU で動かします。1 発話に数十秒)';
+  if (kwDevice === 'webgpu') { try { const a = await navigator.gpu.requestAdapter(); if (!a) throw new Error('アダプタなし。chrome://gpu で WebGPU の状態を確認 (ハードウェアアクセラレーション off やリモートデスクトップだと使えない)'); const inf = a.info || (a.requestAdapterInfo ? await a.requestAdapterInfo() : {});
+      gpuInfo = `GPU: ${inf.vendor || '?'} ${inf.architecture || ''} ${inf.description || ''}`.trim() + ` / f16 ${a.features.has('shader-f16') ? 'あり' : 'なし'} / buffer ${(a.limits.maxBufferSize / 1e9).toFixed(1)} GB / bind ${(a.limits.maxStorageBufferBindingSize / 1e6).toFixed(0)} MB`; } catch (e) { gpuInfo = 'WebGPU は使えません: ' + (e.message || e) + '。CPU (wasm) で動かします (1 発話に数十秒)'; } }
+  // アダプタが取れない PC では CPU (wasm) 経路しか無いが、809M は CPU では現実的に動かない (実測: 1 発話に 10 分以上かかっても終わらない) → ここで止める (?cpu=1 で強行)
+  if (kwDevice === 'webgpu' && gpuInfo.startsWith('WebGPU は使えません') && !location.search.includes('cpu=1')) { kwMeta.textContent = gpuInfo.replace('CPU (wasm) で動かします (1 発話に数十秒)', 'この PC では kana-whisper のブラウザ版は動かせません (809M は CPU では重すぎる)。Chrome の設定「グラフィック アクセラレーションを使用する」を on にするか、リモートデスクトップ越しでなく手元で開いてください'); return; }
   const kwFiles = {}; let kwT0 = performance.now(), kwAllDone = false;
   const kwShow = (line) => { kwMeta.textContent = `${gpuInfo}\n${line}`; };
   kwShow('読み込み開始…');
-  kw = new Worker('kw_worker.js?v=20261008c'); kwToggle.textContent = '読み込み中… (押すと中止)';
+  kw = new Worker('kw_worker.js?v=20261008d'); kwToggle.textContent = '読み込み中… (押すと中止)';
   const kwWatchdog = () => { if (!kwReady && kwAllDone) kwShow(`取得は終わり、WebGPU の初期化に ${((performance.now() - kwT0) / 1000).toFixed(0)} 秒かかっています。GPU メモリが足りない可能性があります。止めて「軽量」を選ぶか、他のタブの GPU 利用を減らしてください`); };
   kw.onmessage = (e) => {
     const d = e.data;
     if (d.type === 'status') {
+      if (d.status === 'note') { gpuInfo += '\n' + d.file; kwShow('読み込み開始…'); return; }
       if (d.status === 'progress') kwFiles[d.file] = Math.round(d.pct || 0); else if (d.status === 'done') kwFiles[d.file] = 100; else if (d.status === 'initiate') kwFiles[d.file] = 0;
       const files = Object.entries(kwFiles).filter(([f]) => f.endsWith('.onnx')); const total = files.length ? Math.round(files.reduce((a, [, p]) => a + p, 0) / files.length) : 0;
       if (d.status === 'ready' || (files.length >= 2 && files.every(([, p]) => p >= 100))) { if (!kwAllDone) { kwAllDone = true; kwT0 = performance.now(); clearTimeout(kwWatch); kwWatch = setTimeout(kwWatchdog, 90000); } kwShow(`ファイル取得完了。${kwDevice === 'webgpu' ? 'WebGPU で初期化中 (シェーダのコンパイル。1〜3 分かかることがあります)' : 'CPU で初期化中'}…`); }
