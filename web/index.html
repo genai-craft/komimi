@@ -52,8 +52,8 @@
   <div class="grid" id="grid"></div>
   <div class="card" id="kwcard" style="margin-top:14px">
     <h2><span>kana-whisper (809M、教師モデル) をブラウザで</span>
-      <span><button id="kwtoggle">読み込む (約 2.0 GB、WebGPU)</button></span></h2>
-    <div class="meta" id="kwmeta">重いので既定 off。Chrome/Edge の WebGPU で動きます。発話が無音で区切れるたびに丸ごと認識 (ストリーミングではない)。komimi の教師なので、これとの差が「蒸留で失ったぶん」。</div>
+      <span><select id="kwmode"><option value="light" selected>軽量 (約 0.7 GB、教師比 CER +3 pt: encoder q4f16 + decoder q4)</option><option value="full">精度優先 (約 2.0 GB、GPU メモリ 3 GB 級: encoder fp16 + decoder fp32)</option></select> <button id="kwtoggle">読み込む (WebGPU)</button></span></h2>
+    <div class="meta" id="kwmeta" style="white-space:pre-line">重いので既定 off。Chrome/Edge の WebGPU で動きます。発話が無音で区切れるたびに丸ごと認識 (ストリーミングではない)。komimi の教師なので、これとの差が「蒸留で失ったぶん」。</div>
     <div class="out" id="kwout"></div>
     <div class="stat"><span>最後の区間 <b id="kwms">–</b></span><span>RTF <b id="kwrtf">–</b></span><span>区間数 <b id="kwn">0</b></span></div>
   </div>
@@ -128,22 +128,35 @@ function render(eng, d) {
   eng.card.querySelector('.fr').textContent = d.frames; eng.card.querySelector('.sk').textContent = d.skipped;
 }
 // ---- kana-whisper (別ワーカー、ON のときだけ) ----
-let kw = null, kwReady = false, kwBuf = [], kwBufLen = 0, kwSilence = 0, kwVoiced = false, kwN = 0, kwBusyMs = 0, kwAudioS = 0, kwText = '';
+let kw = null, kwWatch = null, kwReady = false, kwBuf = [], kwBufLen = 0, kwSilence = 0, kwVoiced = false, kwN = 0, kwBusyMs = 0, kwAudioS = 0, kwText = '';
 const kwToggle = document.getElementById('kwtoggle');
 kwToggle.onclick = async () => {
-  if (kw) { kw.terminate(); kw = null; kwReady = false; kwToggle.textContent = '読み込む (約 2.0 GB、WebGPU)'; document.getElementById('kwmeta').textContent = 'off'; return; }
-  const kwDevice = ('gpu' in navigator) ? 'webgpu' : 'wasm';
-  if (kwDevice === 'wasm') document.getElementById('kwmeta').textContent = 'WebGPU が無いので CPU (wasm) で動かします (とても遅い。Chrome / Edge の最新版なら WebGPU)';
-  kw = new Worker('kw_worker.js?v=20261008b'); kwToggle.textContent = '読み込み中… (押すと中止)';
+  const kwMeta = document.getElementById('kwmeta');
+  if (kw) { kw.terminate(); kw = null; kwReady = false; clearTimeout(kwWatch); kwToggle.textContent = '読み込む (WebGPU)'; kwMeta.textContent = 'off'; return; }
+  const kwDevice = ('gpu' in navigator) ? 'webgpu' : 'wasm'; const kwMode = document.getElementById('kwmode').value;
+  // GPU の素性 (問題の切り分け用): ベンダー、f16 対応、バッファ上限
+  let gpuInfo = 'WebGPU なし (CPU で動かします。とても遅い)';
+  if (kwDevice === 'webgpu') { try { const a = await navigator.gpu.requestAdapter(); const inf = a.info || (a.requestAdapterInfo ? await a.requestAdapterInfo() : {});
+      gpuInfo = `GPU: ${inf.vendor || '?'} ${inf.architecture || ''} ${inf.description || ''}`.trim() + ` / f16 ${a.features.has('shader-f16') ? 'あり' : 'なし'} / buffer ${(a.limits.maxBufferSize / 1e9).toFixed(1)} GB / bind ${(a.limits.maxStorageBufferBindingSize / 1e6).toFixed(0)} MB`; } catch (e) { gpuInfo = 'GPU 情報の取得に失敗: ' + e; } }
+  const kwFiles = {}; let kwT0 = performance.now(), kwAllDone = false;
+  const kwShow = (line) => { kwMeta.textContent = `${gpuInfo}\n${line}`; };
+  kwShow('読み込み開始…');
+  kw = new Worker('kw_worker.js?v=20261008c'); kwToggle.textContent = '読み込み中… (押すと中止)';
+  const kwWatchdog = () => { if (!kwReady && kwAllDone) kwShow(`取得は終わり、WebGPU の初期化に ${((performance.now() - kwT0) / 1000).toFixed(0)} 秒かかっています。GPU メモリが足りない可能性があります。止めて「軽量」を選ぶか、他のタブの GPU 利用を減らしてください`); };
   kw.onmessage = (e) => {
     const d = e.data;
-    if (d.type === 'progress') document.getElementById('kwmeta').textContent = `取得中 ${d.file} ${Math.round(d.pct || 0)}%`;
-    else if (d.type === 'ready') { kwReady = true; kwToggle.textContent = 'off にする'; document.getElementById('kwmeta').textContent = `準備完了 (${(d.ms / 1000).toFixed(0)} s、${d.device})。無音で区切って認識します`; }
+    if (d.type === 'status') {
+      if (d.status === 'progress') kwFiles[d.file] = Math.round(d.pct || 0); else if (d.status === 'done') kwFiles[d.file] = 100; else if (d.status === 'initiate') kwFiles[d.file] = 0;
+      const files = Object.entries(kwFiles).filter(([f]) => f.endsWith('.onnx')); const total = files.length ? Math.round(files.reduce((a, [, p]) => a + p, 0) / files.length) : 0;
+      if (d.status === 'ready' || (files.length >= 2 && files.every(([, p]) => p >= 100))) { if (!kwAllDone) { kwAllDone = true; kwT0 = performance.now(); clearTimeout(kwWatch); kwWatch = setTimeout(kwWatchdog, 90000); } kwShow(`ファイル取得完了。${kwDevice === 'webgpu' ? 'WebGPU で初期化中 (シェーダのコンパイル。1〜3 分かかることがあります)' : 'CPU で初期化中'}…`); }
+      else kwShow(`取得中 ${total}% — ` + files.map(([f, p]) => `${f.replace(/^onnx\//, '')} ${p}%`).join('、'));
+    }
+    else if (d.type === 'ready') { kwReady = true; clearTimeout(kwWatch); kwToggle.textContent = 'off にする'; kwShow(`準備完了 (${(d.ms / 1000).toFixed(0)} s、${d.device}、${kwMode === 'light' ? '軽量' : '精度優先'})。無音で区切って認識します`); }
     else if (d.type === 'text') { kwN++; kwBusyMs += d.ms; kwAudioS += d.sec; kwText += (kwText ? '\n' : '') + d.text; document.getElementById('kwout').textContent = kwText;
       document.getElementById('kwms').textContent = `${(d.ms / 1000).toFixed(1)} s / ${d.sec.toFixed(1)} s`; document.getElementById('kwrtf').textContent = (kwBusyMs / 1000 / kwAudioS).toFixed(2); document.getElementById('kwn').textContent = kwN; }
-    else if (d.type === 'error') { document.getElementById('kwmeta').textContent = 'エラー: ' + d.msg.slice(0, 200); }
+    else if (d.type === 'error') { clearTimeout(kwWatch); kwShow('エラー: ' + d.msg.slice(0, 300)); }
   };
-  kw.postMessage({ type: 'init', base: location.origin + '/models/', device: kwDevice });
+  kw.postMessage({ type: 'init', base: location.origin + '/models/', device: kwDevice, mode: kwMode });
 };
 // マイク/ファイルの音を発話単位に: 声が出てから 0.8 s 無音が続いたら (または 25 s 溜まったら) 1 区間
 function kwFeed(y) {

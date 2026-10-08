@@ -298,8 +298,12 @@ ONNX は optimum で書き出し、量子化の組み合わせは dev 20 発話 
 | encoder **fp16** + decoder fp32 | 1.12% | 1,274 + 688 MB (**採用**) |
 | encoder fp32 + decoder q4 (MatMulNBits、block 32) | 4.25% (accuracy_level 4 だと 5.82%) | 334 MB |
 | encoder int8 (動的量子化) + decoder fp32 | 4.92% | 645 MB |
+| encoder **q4f16** (MatMulNBits on fp16) + decoder fp32 | 3.13% | 370 + 688 MB |
+| encoder q4f16 + decoder q4 (**軽量モード**) | 4.47% | 370 + 334 MB |
+| encoder fp16 + decoder q4 | 3.36% | 1,274 + 334 MB |
 
-- 4 層デコーダの turbo 系は 4-bit に弱く、エンコーダの int8 も効く。fp16 は無損失 → WebGPU も wasm も encoder fp16 + decoder fp32 (計 2.0 GB、初回だけ。ブラウザの Cache API に残る)。
+- 4 層デコーダの turbo 系は 4-bit に弱く、エンコーダの int8 も効く。fp16 は無損失。ページでは**軽量** (q4f16 + q4、0.7 GB、教師比 +3 pt) を既定にし、**精度優先** (fp16 + fp32、2.0 GB) を選べる。
+  2.0 GB 版は取得後の WebGPU 初期化 (シェーダのコンパイルと GPU メモリ確保) で止まって見えることがあり、GPU メモリ 3 GB 級が要る。取得の進み具合・GPU の素性 (f16 対応、バッファ上限)・初期化中の表示を出すようにした。
 - 罠: torch 2.14 の torch.onnx.export は dynamo 既定で、optimum 1.24 と外部データのファイル名が食い違って落ちる → 旧エクスポータ (dynamo=False) を強制。
   accelerate が無いと merged decoder の重みが重複して 1.4 倍。onnx の外部データは同じ場所へ書き直すと追記で肥大する。
   merged decoder (If の部分グラフ) は fp16 変換器 (onnxconverter_common / ORT) が部分グラフの型を揃えられず読めない。quantize_dynamic は If の中を量子化しないので「q8」は大きさが変わらない。

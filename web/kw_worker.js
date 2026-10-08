@@ -10,10 +10,10 @@ self.onmessage = async (e) => {
       env.allowRemoteModels = false; env.allowLocalModels = true; env.localModelPath = d.base;   // 例 /models/
       const t0 = performance.now();
       // 量子化の精度 (dev 20 発話、教師の GPU 出力との CER): decoder fp32 1.1% / q4 4.3%、encoder fp16 1.1% / int8 4.9%。
-      // → WebGPU も wasm も encoder fp16 + decoder fp32 (計 2.0 GB)。q4 デコーダ (334 MB) は精度を落とすので使わない。
+      // 精度優先 = encoder fp16 + decoder fp32 (2.0 GB、GPU メモリ 3 GB 級が要る)。軽量 = encoder q4f16 + decoder q4 (0.7 GB)。
       const load = (device) => pipeline('automatic-speech-recognition', 'kana-whisper', {
-        device, dtype: { encoder_model: 'fp16', decoder_model_merged: 'fp32' },
-        progress_callback: (p) => { if (p.status === 'progress') postMessage({ type: 'progress', file: p.file, pct: p.progress }); },
+        device, dtype: d.mode === 'full' ? { encoder_model: 'fp16', decoder_model_merged: 'fp32' } : { encoder_model: 'q4f16', decoder_model_merged: 'q4' },
+        progress_callback: (p) => { postMessage({ type: 'status', status: p.status, file: p.file || '', pct: p.progress || 0 }); },
       });
       let device = d.device || 'webgpu';
       try { pipe = await load(device); }
