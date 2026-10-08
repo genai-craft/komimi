@@ -20,9 +20,10 @@
   .meter > i { display:block; height:100%; width:0; background:var(--ok); }
   .grid { display:grid; grid-template-columns: repeat(auto-fit, minmax(320px, 1fr)); gap:14px; }
   .card { background:var(--card); border:1px solid #232833; border-radius:12px; padding:12px 14px; min-height:260px; display:flex; flex-direction:column; }
-  .card h2 { margin:0 0 6px; font-size:15px; display:flex; justify-content:space-between; align-items:center; gap:8px; }
+  .card h2 { margin:0 0 6px; font-size:15px; display:flex; justify-content:space-between; align-items:center; gap:8px; flex-wrap:wrap; }
+  .card h2 > span:last-child { display:flex; gap:6px; flex-wrap:wrap; min-width:0; max-width:100%; }
   .card .meta { color:var(--dim); font-size:12px; margin-bottom:8px; }
-  .card select { background:#232833; color:var(--fg); border:1px solid #333a48; border-radius:6px; padding:3px 6px; font-size:12px; }
+  .card select { background:#232833; color:var(--fg); border:1px solid #333a48; border-radius:6px; padding:3px 6px; font-size:12px; max-width:100%; }
   .out { flex:1; font-size:22px; line-height:1.5; letter-spacing:.02em; white-space:pre-wrap; word-break:break-all; min-height:160px; }
   .out .old { color:var(--dim); }
   .stat { font-size:12px; color:var(--dim); margin-top:8px; display:flex; gap:14px; }
@@ -65,11 +66,11 @@
 </footer>
 <script>
 const MODELS = {
-  s3:  { name: 'S3 用: 8 層 sub_ch 88 (v12s、7,000 h)', file: 'models/ja_v12s_i8_c16.kmm', chunk: 16 },
-  s3old: { name: 'S3 用 旧: 8 層 (v10s、3,800 h)', file: 'models/ja_v10s_i8_c16.kmm', chunk: 16 },
-  p4:  { name: 'P4 用: 16 層 (v10)',           file: 'models/ja_v10_i8_c32.kmm',  chunk: 32 },
-  pc:  { name: 'PC 用: 16 層 d=256 (v11a、30M)', file: 'models/ja_v11a_i8_c32.kmm', chunk: 32 },
-  pc2: { name: 'PC 用: 16 層 d=512 (v12、100M、取得 106 MB、wasm では実時間の 1〜2 倍の遅さ)', file: 'models/ja_v12_i8_c32.kmm', chunk: 32 },
+  s3:  { name: 'S3 用 8 層 (v12s、7,000 h)', file: 'models/ja_v12s_i8_c16.kmm', chunk: 16 },
+  s3old: { name: 'S3 用 旧 8 層 (v10s)', file: 'models/ja_v10s_i8_c16.kmm', chunk: 16 },
+  p4:  { name: 'P4 用 16 層 (v10)', file: 'models/ja_v10_i8_c32.kmm', chunk: 32 },
+  pc:  { name: 'PC 用 30M (v11a、28 MB)', file: 'models/ja_v11a_i8_c32.kmm', chunk: 32 },
+  pc2: { name: 'PC 用 100M (v12、106 MB、遅い)', file: 'models/ja_v12_i8_c32.kmm', chunk: 32 },
 };
 const PANELS = [ { model: 's3', chunk: 16, title: 'ESP32-S3 相当' }, { model: 'p4', chunk: 32, title: 'ESP32-P4 相当' }, { model: 'pc', chunk: 32, title: 'PC 向け (v11a、CER 19.8%)' } ];
 const grid = document.getElementById('grid'), status = document.getElementById('status');
@@ -104,9 +105,10 @@ async function restart(eng) {
   const meta = eng.card.querySelector('.meta'); const mname = MODELS[eng.cfg.model].name;
   const buf = await fetchModel(eng.cfg.model, (got, total) => { meta.textContent = total ? `モデル取得中 ${(got / 1e6).toFixed(0)} / ${(total / 1e6).toFixed(0)} MB (${Math.round(100 * got / total)}%) — ${mname}` : `モデル取得中 ${(got / 1e6).toFixed(0)} MB — ${mname}`; });
   meta.textContent = 'エンジン初期化中…';
-  const w = new Worker('worker.js?v=20261008b'); eng.worker = w;
+  const w = new Worker('worker.js?v=20261009a'); eng.worker = w;
   w.onmessage = (e) => {
     const d = e.data;
+    if (d.type === 'error') { eng.card.querySelector('.meta').textContent = 'エラー: ' + d.msg; return; }
     if (d.type === 'ready') { eng.ready = true; eng.card.querySelector('.meta').textContent = `${d.layers} 層, sub_ch ${d.subCh}, chunk ${eng.cfg.chunk}, left 128, int8 (重み・活性・KV・注意)`; updateStatus(); }
     else if (d.type === 'text') render(eng, d);
     else if (d.type === 'error') eng.card.querySelector('.meta').textContent = d.msg;

@@ -1,10 +1,11 @@
 // komimi の WebAssembly をワーカーで動かす (UI スレッドを止めない)。1 ワーカー = 1 エンジン。
-importScripts('komimi.js');
+importScripts('komimi.js?v=20261009a');                                   // Cloudflare が .js をブラウザに 4 時間持たせるので、版で取り直させる
 let M = null, ctx = 0, feed = null, text = null, frames = null, skipped = null, busyUs = 0, audioS = 0, lastChunkMs = 0;
 self.onmessage = async (e) => {
   const d = e.data;
   if (d.type === 'init') {
-    M = await createKomimi();
+    try { M = await createKomimi({ locateFile: (f) => f + '?v=20261009a' }); }
+    catch (err) { postMessage({ type: 'error', msg: 'WebAssembly の読み込みに失敗: ' + (err && err.message || err) }); return; }
     const buf = new Uint8Array(d.model);
     const p = M._malloc(buf.length); M.HEAPU8.set(buf, p);
     ctx = M.ccall('kmw_load', 'number', ['number', 'number'], [p, buf.length]); M._free(p);
