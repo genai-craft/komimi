@@ -151,7 +151,7 @@ void app_main(void) {
     km_par = par2;
     int chunk = m.chunk > 0 ? m.chunk : 16, left = m.left > 0 ? m.left : 128;
     km_stream *s = km_stream_new(&m, chunk, left);
-    km_stream_set_dedup_prefix(s, 1);                      /* チャンク境界で同じカナが 2 回出るのを抑える (CLI と同じ既定に) */
+    km_stream_set_dedup_prefix(s, 0);                      /* off: 「ココ」「おお」のような本物の先頭の繰り返しを削ってしまう (dev では −0.06pt しか効かない) */
     if (!s) { lcd_text(16, 100, 1, LCD_RED, "stream init failed"); lcd_flush(); return; }
     km_stream_set_silence_gate(s, GATE_DB);
     km_clock_us = esp_timer_get_time;
