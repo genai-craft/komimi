@@ -69,17 +69,20 @@ const MODELS = {
   s3old: { name: 'S3 用 旧: 8 層 (v10s、3,800 h)', file: 'models/ja_v10s_i8_c16.kmm', chunk: 16 },
   p4:  { name: 'P4 用: 16 層 (v10)',           file: 'models/ja_v10_i8_c32.kmm',  chunk: 32 },
   pc:  { name: 'PC 用: 16 層 d=256 (v11a、30M)', file: 'models/ja_v11a_i8_c32.kmm', chunk: 32 },
-  pc2: { name: 'PC 用: 16 層 d=512 (v12、100M、取得 106 MB)', file: 'models/ja_v12_i8_c32.kmm', chunk: 32 },
+  pc2: { name: 'PC 用: 16 層 d=512 (v12、100M、取得 106 MB、wasm では実時間の 1〜2 倍の遅さ)', file: 'models/ja_v12_i8_c32.kmm', chunk: 32 },
 };
-const PANELS = [ { model: 's3', chunk: 16, title: 'ESP32-S3 相当' }, { model: 'p4', chunk: 32, title: 'ESP32-P4 相当' }, { model: 'pc2', chunk: 32, title: 'PC 向け (v12、CER 18.7%)' } ];
+const PANELS = [ { model: 's3', chunk: 16, title: 'ESP32-S3 相当' }, { model: 'p4', chunk: 32, title: 'ESP32-P4 相当' }, { model: 'pc', chunk: 32, title: 'PC 向け (v11a、CER 19.8%)' } ];
 const grid = document.getElementById('grid'), status = document.getElementById('status');
 const modelBufs = {}; const engines = [];
 
-async function fetchModel(key) {
+async function fetchModel(key, onProgress) {
   if (modelBufs[key]) return modelBufs[key];
-  status.textContent = `モデル取得中: ${MODELS[key].name}`;
-  const r = await fetch(MODELS[key].file); const buf = await r.arrayBuffer();
-  modelBufs[key] = buf; return buf;
+  const r = await fetch(MODELS[key].file); const total = +r.headers.get('content-length') || 0;
+  if (!r.body) { const buf = await r.arrayBuffer(); modelBufs[key] = buf; return buf; }
+  const reader = r.body.getReader(); const chunks = []; let got = 0;
+  for (;;) { const { done, value } = await reader.read(); if (done) break; chunks.push(value); got += value.length; if (onProgress) onProgress(got, total); }
+  const buf = new Uint8Array(got); let o = 0; for (const c of chunks) { buf.set(c, o); o += c.length; }
+  modelBufs[key] = buf.buffer; return buf.buffer;
 }
 function makePanel(cfg, idx) {
   const card = document.createElement('div'); card.className = 'card';
@@ -98,7 +101,9 @@ async function restart(eng) {
   if (eng.worker) eng.worker.terminate();
   eng.ready = false; eng.lastText = ''; eng.cuts = []; eng.lastSkipped = 0; eng.lastTokenAt = 0;
   eng.card.querySelector('.out').textContent = ''; eng.card.querySelector('.meta').textContent = '読み込み中…';
-  const buf = await fetchModel(eng.cfg.model);
+  const meta = eng.card.querySelector('.meta'); const mname = MODELS[eng.cfg.model].name;
+  const buf = await fetchModel(eng.cfg.model, (got, total) => { meta.textContent = total ? `モデル取得中 ${(got / 1e6).toFixed(0)} / ${(total / 1e6).toFixed(0)} MB (${Math.round(100 * got / total)}%) — ${mname}` : `モデル取得中 ${(got / 1e6).toFixed(0)} MB — ${mname}`; });
+  meta.textContent = 'エンジン初期化中…';
   const w = new Worker('worker.js?v=20261008b'); eng.worker = w;
   w.onmessage = (e) => {
     const d = e.data;
@@ -181,8 +186,8 @@ function kwFlush() {
 
 function updateStatus() {
   const n = engines.filter(e => e.ready).length;
-  status.textContent = n === engines.length ? '準備完了 — マイクか音声ファイルで' : `エンジン準備中 (${n}/${engines.length})`;
-  const ok = n === engines.length;
+  status.textContent = n === engines.length ? '準備完了 — マイクか音声ファイルで' : (n ? `${n}/${engines.length} のエンジンが準備完了 (残りは取得中。そのまま使えます)` : `エンジン準備中 (${n}/${engines.length})`);
+  const ok = n > 0;                                               // 1 つでも準備できたら使える (大きいモデルの取得を待たない)
   document.getElementById('mic').disabled = !ok; document.getElementById('filebtn').disabled = !ok; document.getElementById('clear').disabled = !ok;
 }
 function broadcast(pcm, flush) { for (const e of engines) if (e.ready) e.worker.postMessage({ type: 'feed', pcm, flush }); kwFeed(pcm); }
@@ -230,7 +235,7 @@ document.getElementById('file').onchange = async (ev) => {
 };
 document.getElementById('gate').onchange = () => engines.forEach(restart);
 document.getElementById('dedup').onchange = () => engines.forEach(restart);
-(async () => { for (const [i, p] of PANELS.entries()) engines.push(makePanel(p, i)); for (const e of engines) await restart(e); })();
+(async () => { for (const [i, p] of PANELS.entries()) engines.push(makePanel(p, i)); await Promise.all(engines.map(e => restart(e))); })();   // 並列に取得 (小さいモデルが先に使える)
 </script>
 </body>
 </html>
