@@ -1,6 +1,6 @@
 # komimi (小耳)
 
-小さな Conformer-CTC の日本語 (カナ) 音声認識を **ESP32-S3 / ESP32-P4 / PC / ブラウザ** で動かすための、独自実装の推論エンジンと学習済み重み。コードは Apache-2.0、重みのライセンスは [models/README.md](models/README.md) (現行は CC-BY-4.0)。
+小さな Conformer-CTC の日本語 (カナ) 音声認識を **ESP32-S3 / ESP32-P4 / PC / ブラウザ** で動かすための、独自実装の推論エンジンと学習済み重み。コードも重みも Apache-2.0 ([models/README.md](models/README.md))。
 
 デモ: <https://komimi.aunvox.com> — S3 用 / P4 用の重みを WebAssembly で動かして比較 (結果は実機と同じ、速さだけ違う)。教師の kana-whisper (809M) も WebGPU で並べて動かせる。
 
@@ -18,10 +18,10 @@
 
 ```bash
 make -C csrc                      # komimi_cli (generic C) / komimi_cli_avx2 / komimi_cli_att8 (端末と同じ int8 注意)
-csrc/komimi_cli_avx2 models/ja_v10_i8_c32.kmm a.wav                                   # 全文脈。1 行 "path<TAB>text"
-csrc/komimi_cli_att8 --stream --chunk 32 --left 128 models/ja_v10_i8_c32.kmm a.wav    # 端末と同じチャンク逐次
+csrc/komimi_cli_avx2 models/ja_v12m_i8_c32.kmm a.wav                                   # 全文脈。1 行 "path<TAB>text"
+csrc/komimi_cli_att8 --stream --chunk 32 --left 128 models/ja_v12m_i8_c32.kmm a.wav    # 端末と同じチャンク逐次
 python -m komimi.eval_dev --cli csrc/komimi_cli_att8 --cli_args "--stream --chunk 32 --left 128" \
-    --kmm models/ja_v10_i8_c32.kmm --manifest dev.jsonl --limit 300                   # カナ CER
+    --kmm models/ja_v12m_i8_c32.kmm --manifest dev.jsonl --limit 300                   # カナ CER
 ```
 
 wav は 16 kHz モノラル。マニフェストは 1 行 1 発話の JSON `{"wav", "text", "duration"}` (text はカタカナ)。

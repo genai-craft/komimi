@@ -13,9 +13,10 @@ python pc_agent.py            # 自分で ssh -R 4010 を張る (サーバーの
 
 ```bash
 python tools/device.py ports
-python tools/device.py flash esp32/build_esp32p4/komimi_p4_full_ja_v5_i8_c32.bin --port COM7 --chip esp32p4 --baud 921600
+python tools/device.py flash esp32/build_esp32p4/komimi_p4_full_ja_v12m_i8_c32.bin --port COM7 --chip esp32p4 --baud 921600
 python tools/device.py monitor --port COM7 --seconds 30
-python tools/device.py flash esp32/build_m5sticks3/komimi_m5sticks3_full_ja_v8_i8_c16.bin --port COM4 --chip esp32s3 --baud 460800
+python tools/device.py flash esp32/build_m5sticks3/komimi_m5sticks3_app.bin --port COM4 --chip esp32s3 --baud 460800
+python tools/device.py flash models/ja_v12s_i8_c16.kmm --port COM4 --chip esp32s3 --baud 460800 --offset 0x90000   # モデル区画
 python tools/device.py monitor --port COM4 --seconds 40
 ```
 
@@ -25,8 +26,8 @@ RFC2217 (esp_rfc2217_server) は、ESP32 の USB-Serial/JTAG がリセットで�
 ## 手動 (PC の esptool で直接)
 
 ```powershell
-python -m esptool --chip esp32p4 -p COM7 -b 921600 write_flash 0x0 komimi_p4_full_ja_v5_i8_c32.bin
-python -m esptool --chip esp32s3 -p COM4 -b 460800 write_flash 0x0 komimi_m5sticks3_full_ja_v8_i8_c16.bin
+python -m esptool --chip esp32p4 -p COM7 -b 921600 write_flash 0x0 komimi_p4_full_ja_v12m_i8_c32.bin
+python -m esptool --chip esp32s3 -p COM4 -b 460800 write_flash 0x0 komimi_m5sticks3_app.bin 0x90000 ja_v12s_i8_c16.kmm
 python -m serial.tools.miniterm COM7 115200
 ```
 
@@ -34,5 +35,5 @@ python -m serial.tools.miniterm COM7 115200
 
 | 端末 | イメージ | モデル | RTF |
 |---|---|---|---|
-| ESP32-P4 (16 MB flash / 32 MB PSRAM) | `build_esp32p4/komimi_p4_full_ja_v10_i8_c32.bin` | v10 16 層 int8、chunk 32 (遅延 1.3 s)、dev300 CER 23.25% | 0.85 |
-| M5StickS3 (8 MB flash / 8 MB PSRAM) | `komimi_m5sticks3_app.bin` + `models/ja_v12s_i8_c16.kmm` を 0x90000 に | v12s 8 層 sub_ch 88 int8、chunk 16 (遅延 0.65 s)、dev300 CER 24.75% | 0.93 |
+| ESP32-P4 (16 MB flash / 32 MB PSRAM) | `build_esp32p4/komimi_p4_full_ja_v12m_i8_c32.bin` (`esp32/build_p4.sh $PWD/models/ja_v12m_i8_c32.kmm` で作る) | v12m 16 層 int8、chunk 32 (遅延 1.3 s)、dev300 CER 21.33% | 0.85 (同じ大きさの v10 の実測) |
+| M5StickS3 (8 MB flash / 8 MB PSRAM) | `komimi_m5sticks3_app.bin` + `models/ja_v12s_i8_c16.kmm` を 0x90000 に | v12s 8 層 sub_ch 88 int8、chunk 16 (遅延 0.65 s)、dev300 CER 24.38% | 0.93 |

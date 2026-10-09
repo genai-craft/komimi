@@ -4,8 +4,9 @@ Copyright 2026 Satoshi Toriumi and komimi contributors
 Licensed under the Apache License, Version 2.0.
 
 アーキテクチャは NVIDIA NeMo の Conformer-CTC Small (stt_en_conformer_ctc_small) の公開設定に従う。
-配布する重み (.kmm) は、NVIDIA の公開重み (CC-BY-4.0) を日本語カナで微調整したものを含みうる。
-その場合、重みのライセンスは CC-BY-4.0 (NVIDIA への帰属表示) に従う。
+配布している重み (models/*.kmm、v12 系) はゼロから学習したもので Apache-2.0。
+git の履歴に残る旧世代の重み (v10 / v10s) は NVIDIA の公開重み (stt_en_conformer_ctc_small、CC-BY-4.0) を日本語カナで微調整したもので、
+CC-BY-4.0 (NVIDIA への帰属表示) に従う。
 このリポジトリに他プロジェクトのソースコードは含まれていない (docs/design.md に由来を記す)。
 
 web/dist/models/kana-whisper/ の設定・トークナイザのファイルは sbintuitions/kana-whisper (MIT License、Copyright (c) 2026 SB Intuitions) のもの (同ディレクトリの LICENSE)。

@@ -67,11 +67,8 @@
 <script>
 const MODELS = {
   s3:  { name: 'S3 用 8 層 (v12s、7,000 h)', file: 'models/ja_v12s_i8_c16.kmm', chunk: 16 },
-  s3old: { name: 'S3 用 旧 8 層 (v10s)', file: 'models/ja_v10s_i8_c16.kmm', chunk: 16 },
   p4:  { name: 'P4 用 16 層 (v12m、7,000 h)', file: 'models/ja_v12m_i8_c32.kmm', chunk: 32 },
-  p4old: { name: 'P4 用 旧 16 層 (v10)', file: 'models/ja_v10_i8_c32.kmm', chunk: 32 },
   pc:  { name: 'PC 用 30M (v12a、28 MB)', file: 'models/ja_v12a_i8_c32.kmm', chunk: 32 },
-  pcold: { name: 'PC 用 旧 30M (v11a)', file: 'models/ja_v11a_i8_c32.kmm', chunk: 32 },
   pc2: { name: 'PC 用 100M (v12、106 MB、遅い)', file: 'models/ja_v12_i8_c32.kmm', chunk: 32 },
 };
 const PANELS = [ { model: 's3', chunk: 16, title: 'ESP32-S3 相当' }, { model: 'p4', chunk: 32, title: 'ESP32-P4 相当' }, { model: 'pc', chunk: 32, title: 'PC 向け (v12a、CER 19.7%)' } ];
