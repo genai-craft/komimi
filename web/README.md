@@ -1,6 +1,8 @@
 # web/ — ブラウザデモ (WebAssembly)
 
 `csrc/` のエンジンをそのまま Emscripten で WebAssembly にし、端末と同じ int8 演算 (`KM_ATT_INT8`) でブラウザ上で動かす。
+int8 の内積は WebAssembly SIMD128 のカーネル (`KM_KERNEL_WASM_SIMD`、i32x4.dot_i16x8) で回す。整数演算なので結果は generic C と同じで、
+速さは 4 倍前後 (headless Chromium・1 コアで RTF: S3 用 0.052 → 0.014、P4 用 0.119 → 0.030、PC 用 v12a 0.198 → 0.047、65 秒の音声で出力は全文一致)。
 S3 用 (8 層 sub_ch 88) と P4 用 (16 層) のモデルに同じ音を流して並べて比較できる。結果は端末と一致し、速さだけ PC の値。
 
 ```bash

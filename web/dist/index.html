@@ -107,7 +107,7 @@ async function restart(eng) {
   const meta = eng.card.querySelector('.meta'); const mname = MODELS[eng.cfg.model].name;
   const buf = await fetchModel(eng.cfg.model, (got, total) => { meta.textContent = total ? `モデル取得中 ${(got / 1e6).toFixed(0)} / ${(total / 1e6).toFixed(0)} MB (${Math.round(100 * got / total)}%) — ${mname}` : `モデル取得中 ${(got / 1e6).toFixed(0)} MB — ${mname}`; });
   meta.textContent = 'エンジン初期化中…';
-  const w = new Worker('worker.js?v=20261009a'); eng.worker = w;
+  const w = new Worker('worker.js?v=20261009b'); eng.worker = w;
   w.onmessage = (e) => {
     const d = e.data;
     if (d.type === 'error') { eng.card.querySelector('.meta').textContent = 'エラー: ' + d.msg; return; }
