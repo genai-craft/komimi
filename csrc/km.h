@@ -40,8 +40,11 @@ typedef struct {
 int km_load(km_model *m, const uint8_t *buf, size_t size);
 
 /* 全文脈推論: 16 kHz float PCM (n サンプル) → CTC の greedy 結果 (token id、blank/重複は除いた列)。
- * 戻り値は token 数 (最大 max_out)、負ならエラー。logp_out に (T', vocab) の log-softmax を書ける (NULL 可)。 */
+ * 戻り値は token 数 (最大 max_out)、負ならエラー。n_frames_out に出力フレーム数 T' (= 入力フレーム / 4) を書く (NULL 可)。 */
 int km_recognize(const km_model *m, const float *pcm, int n, int *ids, int max_out, int *n_frames_out);
+/* km_recognize と同じ計算で、各フレームの CTC logits (softmax 前、vocab 個、blank = vocab-1) も logits_out に書く
+ * (先頭 max_frames フレームまで。T' は 1 + (n/hop)/4 程度なので n/640 + 2 フレームあれば足りる)。候補の強制採点 (CTC forward) 用。 */
+int km_recognize_ex(const km_model *m, const float *pcm, int n, int *ids, int max_out, int *n_frames_out, float *logits_out, int max_frames);
 
 /* 行列の重み (int8/int4 の本体と scale) を、大きい順に budget bytes まで alloc で確保した RAM に写して差し替える。
  * フラッシュ直読みの帯域が律速の端末向け (PSRAM に写す)。写した合計 bytes を返す。 */

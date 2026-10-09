@@ -1,4 +1,4 @@
-/* 内積カーネル。ここだけ機種ごとに差し替える (KM_KERNEL_GENERIC / KM_KERNEL_ESP32S3 / KM_KERNEL_ESP32P4 / KM_KERNEL_AVX2)。
+/* 内積カーネル。ここだけ機種ごとに差し替える (KM_KERNEL_GENERIC / KM_KERNEL_ESP32S3 / KM_KERNEL_ESP32P4 / KM_KERNEL_AVX2 / KM_KERNEL_WASM_SIMD)。
  *
  * km_gemv_s8: out[r] = s_x * s_w[r] * Σ_c q_w[r,c] * q_x[c] + bias[r]   (r < rows, c < cols; cols は 16 の倍数が前提)
  * km_quant_vec: float ベクトル → 対称 int8 (scale = max|x|/127)。 */
@@ -192,6 +192,22 @@ static inline int32_t km_dot_s8(const int8_t *a, const int8_t *b, int n) {
     int rem = n & 15;
     if (rem) acc += km_dot_s8_scalar(a + (n - rem), b + (n - rem), rem);
     return acc;
+}
+#elif defined(KM_KERNEL_WASM_SIMD)
+/* WebAssembly SIMD128 (emcc -msimd128 -DKM_KERNEL_WASM_SIMD)。int8 を int16 に広げて i32x4.dot_i16x8 で積和。整数演算なので結果は generic と同じ */
+#include <wasm_simd128.h>
+static inline int32_t km_dot_s8(const int8_t *a, const int8_t *b, int n) {
+    v128_t acc0 = wasm_i32x4_splat(0), acc1 = wasm_i32x4_splat(0);
+    int i = 0;
+    for (; i + 16 <= n; i += 16) {
+        v128_t va = wasm_v128_load(a + i), vb = wasm_v128_load(b + i);
+        acc0 = wasm_i32x4_add(acc0, wasm_i32x4_dot_i16x8(wasm_i16x8_extend_low_i8x16(va), wasm_i16x8_extend_low_i8x16(vb)));
+        acc1 = wasm_i32x4_add(acc1, wasm_i32x4_dot_i16x8(wasm_i16x8_extend_high_i8x16(va), wasm_i16x8_extend_high_i8x16(vb)));
+    }
+    v128_t acc = wasm_i32x4_add(acc0, acc1);
+    int32_t s = wasm_i32x4_extract_lane(acc, 0) + wasm_i32x4_extract_lane(acc, 1) + wasm_i32x4_extract_lane(acc, 2) + wasm_i32x4_extract_lane(acc, 3);
+    for (; i < n; i++) s += (int32_t)a[i] * b[i];
+    return s;
 }
 #else
 static inline int32_t km_dot_s8(const int8_t *a, const int8_t *b, int n) {

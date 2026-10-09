@@ -172,6 +172,10 @@ static int subsample(const km_model *m, const float *feat, int Tin, float *x, in
 }
 
 int km_recognize(const km_model *m, const float *pcm, int n, int *ids, int max_out, int *n_frames_out) {
+    return km_recognize_ex(m, pcm, n, ids, max_out, n_frames_out, NULL, 0);
+}
+
+int km_recognize_ex(const km_model *m, const float *pcm, int n, int *ids, int max_out, int *n_frames_out, float *logits_out, int max_frames) {
     int Tin = km_num_frames(m, n), d = m->d;
     float *feat = (float *)malloc(sizeof(float) * (size_t)Tin * m->n_mel);
     float *fw = (float *)malloc(sizeof(float) * (size_t)m->nfft * 3);
@@ -200,6 +204,7 @@ int km_recognize(const km_model *m, const float *pcm, int n, int *ids, int max_o
     int blank = m->vocab - 1, prev = blank, n_out = 0;
     for (int t = 0; t < T; t++) {
         matvec(&m->head, W.x + (size_t)t * d, m->headb, lg, W.qb);
+        if (logits_out && t < max_frames) memcpy(logits_out + (size_t)t * m->vocab, lg, fl * m->vocab);
         int best = 0; for (int i = 1; i < m->vocab; i++) if (lg[i] > lg[best]) best = i;
         if (best != blank && best != prev && n_out < max_out) ids[n_out++] = best;
         prev = best;
