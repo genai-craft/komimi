@@ -19,6 +19,8 @@
 #include "esp_log.h"
 #include "esp_partition.h"
 #include "esp_timer.h"
+#include "esp_task_wdt.h"
+#include "esp_system.h"
 #include "audio.h"
 #include "lcd.h"
 #include "pm1.h"
@@ -40,7 +42,15 @@ static const char *TAG = "demo";
 /* ---- 2 コア ---- */
 static SemaphoreHandle_t s_go, s_done; static km_range_fn s_fn; static void *s_ctx; static int s_lo, s_hi;
 static void worker(void *arg) { for (;;) { xSemaphoreTake(s_go, portMAX_DELAY); s_fn(s_ctx, s_lo, s_hi); xSemaphoreGive(s_done); } }
-static void par2(km_range_fn fn, void *ctx, int n) { int mid = n / 2; s_fn = fn; s_ctx = ctx; s_lo = mid; s_hi = n; xSemaphoreGive(s_go); fn(ctx, 0, mid); xSemaphoreTake(s_done, portMAX_DELAY); }
+static TaskHandle_t s_main_task; static volatile int s_in_par = 0; static const char *s_rst = "";
+/* [2026-10-10 診断] 再入 (仕事の中からさらに par2) や worker 自身からの呼び出しは直列に落とす (両方が s_done を待って固まるのを防ぐ)。
+ * worker が 5 秒返ってこなければ abort してバックトレースを残す (黙って固まるより良い) */
+static void par2(km_range_fn fn, void *ctx, int n) {
+    if (s_in_par || xTaskGetCurrentTaskHandle() != s_main_task) { fn(ctx, 0, n); return; }
+    s_in_par = 1; int mid = n / 2; s_fn = fn; s_ctx = ctx; s_lo = mid; s_hi = n; xSemaphoreGive(s_go); fn(ctx, 0, mid);
+    if (xSemaphoreTake(s_done, pdMS_TO_TICKS(5000)) != pdTRUE) { ESP_LOGE(TAG, "par2: worker did not return in 5 s (n=%d)", n); abort(); }
+    s_in_par = 0;
+}
 static void *psram_alloc(size_t n) { return heap_caps_malloc(n, MALLOC_CAP_SPIRAM | MALLOC_CAP_8BIT); }
 
 /* ---- 前処理: 80 Hz ハイパス (2 次、@16 kHz。StickS3 のマイクの低域ゴロゴロ・DC を落とす。Aunvox クライアントと同じ考え) とクリップ計数 ---- */
@@ -95,7 +105,7 @@ static void draw(void) { int64_t t0 = esp_timer_get_time(); draw_(); s_draw_us +
 static void draw_(void) {
     lcd_clear(LCD_BLACK);
     lcd_fill_rect(0, 0, LCD_W, 24, LCD_DGRAY);
-    lcd_text(4, 4, 2, LCD_CYAN, "komimi");
+    if (s_rst[0]) lcd_text(4, 4, 2, LCD_RED, s_rst); else lcd_text(4, 4, 2, LCD_CYAN, "komimi");   /* 前回が異常リセットなら理由を赤で */
     /* レベルメータ (-80..0 dBFS を 70px に) としきい値の印 */
     int bx = 112, bw = 70; lcd_fill_rect(bx, 8, bw, 8, LCD_BLACK);
     int lv = (int)((s_level_db + 80.f) / 80.f * bw); if (lv < 0) lv = 0; if (lv > bw) lv = bw;
@@ -146,8 +156,19 @@ void app_main(void) {
     static km_model m; int rc = km_load(&m, (const uint8_t *)map, part->size);
     if (rc) { char e[40]; snprintf(e, sizeof e, "km_load failed %d", rc); lcd_text(16, 100, 1, LCD_RED, e); lcd_flush(); return; }
     s_model = &m;
-    s_go = xSemaphoreCreateBinary(); s_done = xSemaphoreCreateBinary();
+    s_go = xSemaphoreCreateBinary(); s_done = xSemaphoreCreateBinary(); s_main_task = xTaskGetCurrentTaskHandle();
     xTaskCreatePinnedToCore(worker, "km_w1", 16384, NULL, configMAX_PRIORITIES - 2, NULL, 1);
+    /* [2026-10-10 診断] メインループの watchdog: 15 秒回らなければ panic → 再起動 (バックトレース付き)。
+     * 前回のリセット理由を記録し、異常なら画面のタイトルの位置に赤で出す (ハングの正体を次回に残す) */
+    { esp_task_wdt_config_t wcfg = { .timeout_ms = 15000, .idle_core_mask = 0, .trigger_panic = true };
+      if (esp_task_wdt_init(&wcfg) != ESP_OK) esp_task_wdt_reconfigure(&wcfg);
+      esp_task_wdt_add(NULL);
+      esp_reset_reason_t rr = esp_reset_reason();
+      static char rst[12]; const char *name = "";
+      switch (rr) { case ESP_RST_PANIC: name = "PANIC"; break; case ESP_RST_INT_WDT: name = "IWDT"; break; case ESP_RST_TASK_WDT: name = "TWDT"; break;
+                    case ESP_RST_WDT: name = "WDT"; break; case ESP_RST_BROWNOUT: name = "BROWN"; break; case ESP_RST_DEEPSLEEP: name = "SLEEP"; break; default: break; }
+      snprintf(rst, sizeof rst, "%s", name); s_rst = rst;
+      ESP_LOGI(TAG, "reset reason: %d%s%s", (int)rr, name[0] ? " = " : "", name); }
     km_par = par2;
     int chunk = m.chunk > 0 ? m.chunk : 16, left = m.left > 0 ? m.left : 128;
     km_stream *s = km_stream_new(&m, chunk, left);
@@ -171,6 +192,7 @@ void app_main(void) {
     int consumed = 0; int64_t last_draw = 0, last_token_us = 0; double acc_audio = 0, acc_comp = 0;
     int prev_sk = 0, prev_frames = 0, silent_run = 0, pending_break = 0;
     for (;;) {
+        esp_task_wdt_reset();
         size_t got = 0;
         int16_t *pcm = xRingbufferReceiveUpTo(s_ring, &got, pdMS_TO_TICKS(50), 1600 * sizeof(int16_t));
         if (pcm) {
