@@ -32,7 +32,10 @@ def open_serial(port, baud, deadline):
     last = None
     while time.time() < deadline:
         try:
-            return serial.Serial(port, baud, timeout=0.2)
+            # [2026-10-10] 開く前に RTS/DTR を下げておく。pyserial の既定 (開くと DTR/RTS を立てる、閉じると落とす) だと
+            # 一瞬 RTS=1/DTR=0 になり、USB-Serial/JTAG が EN を引いて端末がリセットされる (monitor のたびに再起動していた)
+            ser = serial.Serial(); ser.port = port; ser.baudrate = baud; ser.timeout = 0.2; ser.rts = False; ser.dtr = False
+            ser.open(); return ser
         except Exception as e:  # noqa: BLE001
             last = e; time.sleep(0.3)
     raise RuntimeError(f"cannot open {port}: {last}")
@@ -70,6 +73,7 @@ def monitor(port, baud, seconds, do_reset):
             except Exception as e2:  # noqa: BLE001
                 out.append(f"[agent] reopen failed: {e2}\n"); break
     try:
+        ser.rts = False; ser.dtr = False          # 閉じるときも EN を引かない (上の open_serial の注記)
         ser.close()
     except Exception:  # noqa: BLE001
         pass
