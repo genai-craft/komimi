@@ -33,7 +33,7 @@ static float *read_wav(const char *p, int *n_out) {
 static void dump_tap(void *ctx, int frame, const float *lg, int vocab) { (void)frame; fwrite(lg, sizeof(float), (size_t)vocab, (FILE *)ctx); }
 
 int main(int argc, char **argv) {
-    int stream = 0, chunk = -1, left = -1, piece = 1600;      /* chunk/left の省略時は .kmm ヘッダの値 (無ければ 16/128) */ const char *dump = NULL; float silence_db = 0.f; int dedup = 1;
+    int stream = 0, chunk = -1, left = -1, piece = 1600, preroll = 1;      /* chunk/left の省略時は .kmm ヘッダの値 (無ければ 16/128) */ const char *dump = NULL; float silence_db = 0.f; int dedup = 1;
     while (argc > 1 && argv[1][0] == '-') {                       /* --stream [--chunk C --left L --piece N --dump logits.f32] */
         if (!strcmp(argv[1], "--stream")) stream = 1;
         else if (!strcmp(argv[1], "--chunk") && argc > 2) { chunk = atoi(argv[2]); argv++; argc--; }
@@ -42,10 +42,11 @@ int main(int argc, char **argv) {
         else if (!strcmp(argv[1], "--dump") && argc > 2) { dump = argv[2]; argv++; argc--; }
         else if (!strcmp(argv[1], "--silence-db") && argc > 2) { silence_db = (float)atof(argv[2]); argv++; argc--; }
         else if (!strcmp(argv[1], "--no-dedup")) dedup = 0;
+        else if (!strcmp(argv[1], "--preroll") && argc > 2) { preroll = atoi(argv[2]); argv++; argc--; }
         else { fprintf(stderr, "unknown option %s\n", argv[1]); return 2; }
         argv++; argc--;
     }
-    if (argc < 3) { fprintf(stderr, "usage: %s [--stream [--chunk C --left L] --piece N --dump f --silence-db D --no-dedup] model.kmm a.wav ...  (chunk/left の省略時は .kmm ヘッダの値)\n", argv[0]); return 2; }
+    if (argc < 3) { fprintf(stderr, "usage: %s [--stream [--chunk C --left L] --piece N --dump f --silence-db D --no-dedup --preroll N] model.kmm a.wav ...  (chunk/left の省略時は .kmm ヘッダの値)\n", argv[0]); return 2; }
     size_t msz; uint8_t *mb = read_file(argv[1], &msz); if (!mb) { fprintf(stderr, "cannot read %s\n", argv[1]); return 1; }
     static km_model m; int rc = km_load(&m, mb, msz); if (rc) { fprintf(stderr, "km_load: %d\n", rc); return 1; }
     if (chunk < 0) chunk = m.chunk > 0 ? m.chunk : 16;
@@ -62,6 +63,7 @@ int main(int argc, char **argv) {
             if (df) km_stream_set_tap(st, dump_tap, df);
             if (silence_db != 0.f) km_stream_set_silence_gate(st, silence_db);
             km_stream_set_dedup_prefix(st, dedup);
+            km_stream_set_preroll(st, preroll);
             for (int off = 0; off < n; off += piece) km_stream_feed(st, x + off, n - off < piece ? n - off : piece);
             km_stream_finish(st);
             const int *sid; k = km_stream_tokens(st, &sid); memcpy(ids, sid, sizeof(int) * (size_t)k); T = km_stream_frames(st);

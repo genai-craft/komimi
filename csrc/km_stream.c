@@ -59,7 +59,7 @@ struct km_stream {
     int8_t *qb;
     /* 状態 */
     long frames_done; int prev, finished;
-    float silence_db; long ctx_start; int skipped; long pend; int pend_n;   /* pend: 無音と判定したが確定していないチャンクの先頭フレーム (−1 = 無し)。次が声なら先に流す (出だしの子音・母音と左文脈を落とさない) */      /* 無音ゲート: しきい値 (dBFS、0 = 無効)、文脈の開始フレーム (飛ばした直後はリセット)、飛ばしたチャンク数 */
+    float silence_db; long ctx_start; int skipped; long pend_t0[8]; int pend_len[8]; int npend; int max_pend;   /* pend: 無音と判定したが確定していないチャンクの先頭フレーム (−1 = 無し)。次が声なら先に流す (出だしの子音・母音と左文脈を落とさない) */      /* 無音ゲート: しきい値 (dBFS、0 = 無効)、文脈の開始フレーム (飛ばした直後はリセット)、飛ばしたチャンク数 */
     int *ids; int *id_frame; int n_ids, cap_ids;
     int dedup_prefix;                         /* 1: 直前の piece が隣接フレームで出た次の piece の接頭辞なら捨てる (CTC+サブワードの「タ」「タイムズ」対策) */
     void (*tap)(void *, int, const float *, int); void *tap_ctx;
@@ -250,7 +250,7 @@ void km_stream_free(km_stream *s) {
 
 void km_stream_reset(km_stream *s) {
     s->n_total = 0; s->T_total = -1; s->T1_total = -1; s->frames_done = 0; s->prev = s->m->vocab - 1; s->finished = 0; s->n_ids = 0;
-    s->ctx_start = 0; s->skipped = 0; s->pend = -1; s->pend_n = 0;
+    s->ctx_start = 0; s->skipped = 0; s->npend = 0; s->max_pend = 1;
     memset(s->pcm, 0, sizeof(float) * s->pcm_cap);
     memset(s->gc, 0, sizeof(float) * s->nl * (s->half + s->C) * s->d);
     s->h1_next = 0;
@@ -282,17 +282,25 @@ static float chunk_dbfs(const km_stream *s, long t0, int n) {
    (声の直前の無音・雑音をモデルに見せる。出だしの子音・母音を切らず、左文脈も残る)。
    注: 立ち上がり位置で格子を合わせ直す案 (手前の音を無かったことにする) も試したが、1 文字目の一致率は変わらなかった。
    出だしの弱さは「発話の前に音が続いている」こと自体にモデルが慣れていないためで、学習側 (先頭に無音・雑音を足す増強) で直す。 */
+/* [2026-10-11] 保留は最大 max_pend チャンク (既定 1 = 従来)。hayamimi の実測 (VAD 前の実音声を前置すると冒頭脱落 30/100 → 0) を受けて、
+   声の直前の無音・雑音をもっと長くモデルに見せられるようにした (km_stream_set_preroll)。溢れた分は古い順に飛ばす */
 static void decide(km_stream *s, long t0, int n) {
     int quiet = s->silence_db != 0.f && chunk_dbfs(s, t0, n) < s->silence_db;
     if (quiet) {
-        if (s->pend >= 0) skip_chunk(s, s->pend, s->pend_n);
-        s->pend = t0; s->pend_n = n;
+        if (s->npend >= s->max_pend) {
+            skip_chunk(s, s->pend_t0[0], s->pend_len[0]);
+            for (int i = 1; i < s->npend; i++) { s->pend_t0[i - 1] = s->pend_t0[i]; s->pend_len[i - 1] = s->pend_len[i]; }
+            s->npend--;
+        }
+        s->pend_t0[s->npend] = t0; s->pend_len[s->npend] = n; s->npend++;
     } else {
-        if (s->pend >= 0) { process(s, s->pend, s->pend_n); s->pend = -1; }
+        for (int i = 0; i < s->npend; i++) process(s, s->pend_t0[i], s->pend_len[i]);
+        s->npend = 0;
         process(s, t0, n);
     }
 }
-static inline long next_t0(const km_stream *s) { return s->pend >= 0 ? s->pend + s->pend_n : s->frames_done; }
+static inline long next_t0(const km_stream *s) { return s->npend > 0 ? s->pend_t0[s->npend - 1] + s->pend_len[s->npend - 1] : s->frames_done; }
+void km_stream_set_preroll(km_stream *s, int chunks) { s->max_pend = chunks < 1 ? 1 : chunks > 8 ? 8 : chunks; }
 
 /* 無音チャンクを飛ばす: 出力フレームだけ進め、以後の左文脈をこのチャンクの終わりからにする */
 static void skip_chunk(km_stream *s, long t0, int n) {
@@ -752,5 +760,6 @@ void km_stream_finish(km_stream *s) {
         long t0 = next_t0(s); int n = (int)(Tout - t0 < s->C ? Tout - t0 : s->C);
         decide(s, t0, n);
     }
-    if (s->pend >= 0) { skip_chunk(s, s->pend, s->pend_n); s->pend = -1; }    /* 末尾の無音は飛ばす */
+    for (int i = 0; i < s->npend; i++) skip_chunk(s, s->pend_t0[i], s->pend_len[i]);    /* 末尾の無音は飛ばす */
+    s->npend = 0;
 }

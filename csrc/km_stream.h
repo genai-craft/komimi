@@ -17,6 +17,7 @@ void km_stream_finish(km_stream *s);
 /* 無音ゲート: チャンクの RMS が dbfs (例 -55) を下回ったら計算を飛ばし、左文脈はそのチャンクの後からにする。0 で無効 (既定)。
  * 飛ばした時間で遅れを取り戻せる (呼び出し側が音を溜めておけば、平均で実時間なら足りる)。 */
 void km_stream_set_silence_gate(km_stream *s, float dbfs);
+void km_stream_set_preroll(km_stream *s, int chunks);      /* 無音ゲートで声の前に流す保留チャンク数 (1..8、既定 1) */
 int km_stream_skipped(const km_stream *s);
 /* 接頭辞重複の除去 (既定 on): 直前の piece が 2 フレーム以内に出た次の piece の接頭辞なら捨てる */
 void km_stream_set_dedup_prefix(km_stream *s, int on);

@@ -362,3 +362,20 @@ ONNX は optimum で書き出し、量子化の組み合わせは dev 20 発話 
   accelerate が無いと merged decoder の重みが重複して 1.4 倍。onnx の外部データは同じ場所へ書き直すと追記で肥大する。
   merged decoder (If の部分グラフ) は fp16 変換器 (onnxconverter_common / ORT) が部分グラフの型を揃えられず読めない。quantize_dynamic は If の中を量子化しないので「q8」は大きさが変わらない。
   transformers.js の dtype と接尾辞: fp16 → `_fp16`、q4 → `_q4`、q8 → `_quantized`、fp32 → 接尾辞なし。Worker のスクリプトはブラウザに強く残るので URL に版を付け、nginx は `Cache-Control: no-cache`。
+
+## hayamimi からの取り込み (2026-10-11)
+
+[hayamimi](https://github.com/oboroge0/hayamimi) (MIT) は PC の CPU だけで動く多言語リアルタイム文字起こしで、日本語は ReazonSpeech k2 zipformer
+(sherpa-onnx、int8 で 72 MB) を使う。komimi (6.5〜100M、MCU/ブラウザ) とは守備範囲が違うが、評価と設計で学べる点を取り込んだ。
+
+- **冒頭脱落の測り方と対策**: hayamimi は「VAD が発話開始を 198 ms 遅れて検出し、語頭の子音が切れる」のを冒頭脱落と定義し、
+  **VAD 検出点より前の実音声を最大 1.0 s 前置する**ことで 100 クリップ中 30 件 → 0 件にした (無音 300 ms の前置より効く)。
+  komimi の無音ゲートは「無音と判定したチャンクを 1 つ保留し、次が声ならそれを先に流す」= 160 ms の実音声プリロールだった。
+  これを可変にした (`km_stream_set_preroll(s, n)`、CLI `--preroll N`、1〜8、既定 1 = 従来)。効き目は tools の出だし評価
+  (先頭 1.2 s に −60 dB の雑音、1 文字目一致率) で掃引して決める。
+- **参考: PC 級 CPU モデルの位置**: 同じ合成発話 (TTS、30 本) で ReazonSpeech zipformer は CER 平均 5% 前後、CPU 8 スレッドで RTF 0.012。
+  komimi v12 (100M) の dev300 CER 18.65% とは精度の階級が 1 つ違い、その代わりモデルは 7〜70 倍大きい。komimi の立ち位置は
+  「ESP32/ブラウザで動く最小の日本語認識」で変わらない。zipformer の漢字出力を発音カナに直して komimi の dev300 を測ると
+  29.7% になるが、これは参照 (kana-whisper の疑似ラベル) との読みの流儀の差が支配的で、比較には使えない。
+- **ネットワークマイクの規約**: hayamimi の `/ingest` (WebSocket、JSON ヘッダ 1 枚 + `pcm_s16le` フレーム、ESP32 向けに最小実装) は、
+  komimi の端末が WiFi で PC に音を送る形の下敷きになる (手元はカナ、PC では漢字)。未実装。
