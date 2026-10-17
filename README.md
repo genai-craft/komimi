@@ -2,6 +2,8 @@
 
 小さな Conformer-CTC の日本語 (カナ) 音声認識を **ESP32-S3 / ESP32-P4 / PC / ブラウザ** で動かすための、独自実装の推論エンジンと学習済み重み。コードも重みも Apache-2.0 ([models/README.md](models/README.md))。
 
+自由認識の精度は公開の小型モデル (moonshine-ja、ReazonSpeech zipformer) に劣る (人手の正解で測った比較は [models/README.md](models/README.md#公開モデルとの比較-人手の正解2026-10-17))。komimi の値打ちは、マイコンで動くストリーミング CTC と、候補を CTC で採点できること。
+
 デモ: <https://komimi.aunvox.com> — S3 用 / P4 用の重みを WebAssembly で動かして比較 (結果は実機と同じ、速さだけ違う)。教師の kana-whisper (809M) も WebGPU で並べて動かせる。
 
 - `csrc/` — C エンジン。`km_recognize` (全文脈) と `km_stream_*` (チャンク逐次、KV キャッシュ、無音ゲート)。

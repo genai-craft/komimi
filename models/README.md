@@ -7,6 +7,31 @@
 | `ja_v12s_i8_c16.kmm` (`_c32` は既定チャンクが違うだけ) | 8 層 / d=176 / sub_ch 88 (約 6.5M) | 7.1 MB | 16 (640 ms) | **24.38%** (chunk 16) / 22.08% (chunk 32) | 20.2% | ESP32-S3: RTF 0.93 (chunk 16)。v10s と同じ大きさで 7,000 時間 + カリキュラム学習、ゼロから (Apache-2.0)。発話の前に無音・雑音を足す増強つき (実機の出だしに強い) |
 | `ja_v12_i8_c32.kmm` (`_c16` も。106 MB は GitHub の上限を超えるので [Releases](https://github.com/genai-craft/komimi/releases/tag/v12) から) | 16 層 / d=512 / ff 2048 / 8 ヘッド (約 100M) | 106 MB | 32 (1,280 ms) | **18.65%** (chunk 32) / 20.11% (chunk 16) | 16.8% | PC (AVX2 で RTF 0.09)、ブラウザ (取得 106 MB)。7,000 時間、ゼロから (Apache-2.0)、発話前の増強つき |
 
+
+## 公開モデルとの比較 (人手の正解、2026-10-17)
+
+上の dev CER は教師 (kana-whisper) との一致率なので、人手の正解がある公開セットで他のモデルと並べた。正解も出力も pyopenjtalk の g2p でカナに直した
+**カナ CER** (表記ゆれを除いた「音」の誤り)。FLEURS ja は読み上げ 300 文、ReazonSpeech test は TV 400 文。ReazonSpeech test の字幕には音声にある語が
+無いことがあり、ReazonSpeech で学習したモデル (komimi、zipformer、moonshine-ja) が有利に出るので、地力は FLEURS の列で読む。
+
+| モデル | 大きさ | 動かし方 | FLEURS ja | ReazonSpeech test |
+|---|---|---|---|---|
+| komimi `ja_v12s` | 6.5M | ストリーミング chunk 16 / left 128 (CPU) | 23.1% | 31.3% |
+| komimi `ja_v12s` | 6.5M | 全文脈 | 18.2% | 28.6% |
+| komimi `ja_v12m` | 13M | ストリーミング chunk 32 / left 128 | 16.5% | 29.5% |
+| komimi `ja_v12m` | 13M | 全文脈 | 13.6% | 28.3% |
+| komimi `ja_v12a` | 30M | ストリーミング chunk 32 / left 128 | 15.4% | 28.9% |
+| komimi `ja_v12a` | 30M | 全文脈 | 13.1% | 27.8% |
+| moonshine-tiny-ja | 27M | encoder-decoder、非ストリーミング | **7.1%** | 8.0% |
+| moonshine-base-ja | 62M | 同上 | 7.6% | 5.0% |
+| ReazonSpeech zipformer (sherpa-onnx int8) | 80M | ストリーミング (CPU) | 5.0% | **4.6%** |
+| SenseVoiceSmall (sherpa-onnx int8) | 234M | 非ストリーミング (CPU) | 5.8% | 19.6% |
+| kotoba-whisper-v2.0 | 756M | 非ストリーミング (GPU) | **4.0%** | 8.7% |
+
+読み方: **komimi は同じ大きさの moonshine-tiny-ja に大差で負ける** (30M の `ja_v12a` を全文脈で使っても 13.1% 対 7.1%)。komimi の値打ちは精度ではなく、
+ESP32-S3 / P4 で int8 のストリーミング CTC が動くことと、候補の CTC 採点 (決まった言い方から選ぶ用途) にある。PC やブラウザで自由認識の精度が要るなら
+moonshine-ja や zipformer を使う方がよい。差の主因は学習データ (疑似ラベル約 7,000 時間) と大きさ。改善の要望は Issue へ。
+
 - 出力はカタカナ (長音「ー」・促音「ッ」を含む)。語彙は SentencePiece 1,024 で、token 表はファイルの中にある。
 - 動的チャンクで学習しているので、同じ重みを `--chunk 0` (全文脈) / 16 / 32 のどれでも使える。ヘッダの chunk/left は既定値 (CLI も端末も省略時はこれを使う)。
 - 学習データは ReazonSpeech 約 7,000 時間、教師 (読みの正解) は sbintuitions/kana-whisper。dev も同じ教師の読みを正解にした発話なので、
