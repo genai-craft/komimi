@@ -22,11 +22,15 @@
 | komimi `ja_v12m` | 13M | 全文脈 | 13.6% | 28.3% |
 | komimi `ja_v12a` | 30M | ストリーミング chunk 32 / left 128 | 15.4% | 28.9% |
 | komimi `ja_v12a` | 30M | 全文脈 | 13.1% | 27.8% |
+| [Ralomi](https://huggingface.co/ayousanz/ralomi) 1.0 (ESP32-S3 向け DFSMN-CTC、ひらがな出力) | 2.05M | 1 秒ずつ処理 (入力 ≤15 s。FLEURS は 76 文を 15 s で切断、≤15 s の 224 文では 29.4% 対 ja_v12s 22.2%) | 31.9% | **22.2%** |
 | moonshine-tiny-ja | 27M | encoder-decoder、非ストリーミング | **7.1%** | 8.0% |
 | moonshine-base-ja | 62M | 同上 | 7.6% | 5.0% |
 | ReazonSpeech zipformer (sherpa-onnx int8) | 80M | ストリーミング (CPU) | 5.0% | **4.6%** |
 | SenseVoiceSmall (sherpa-onnx int8) | 234M | 非ストリーミング (CPU) | 5.8% | 19.6% |
 | kotoba-whisper-v2.0 | 756M | 非ストリーミング (GPU) | **4.0%** | 8.7% |
+
+Ralomi (2026-10-17 公開、ESP32-S3 で RTF 0.45、16 bit 量子化) との比較は土俵で割れる: TV 音声の ReazonSpeech test では Ralomi 22.2% 対 `ja_v12s` 31.2% で Ralomi が良く、
+読み上げの FLEURS では `ja_v12s` 22.2% 対 Ralomi 29.4% (15 s 以下の 224 文) で komimi が良い。差の主因は正解ラベルの作り方 (Ralomi は字幕の読み、komimi は kana-whisper の疑似ラベル)。
 
 読み方: **komimi は同じ大きさの moonshine-tiny-ja に大差で負ける** (30M の `ja_v12a` を全文脈で使っても 13.1% 対 7.1%)。komimi の値打ちは精度ではなく、
 ESP32-S3 / P4 で int8 のストリーミング CTC が動くことと、候補の CTC 採点 (決まった言い方から選ぶ用途) にある。PC やブラウザで自由認識の精度が要るなら
